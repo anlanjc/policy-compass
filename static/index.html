@@ -178,8 +178,11 @@ async function send(e) {
         if (!line.startsWith('data: ')) continue;
         const obj = JSON.parse(line.slice(6));
         if (obj.type === 'meta') {
-          document.getElementById('mode').textContent = obj.llm_mode;
-          document.getElementById('modeBadge').textContent = 'LLM: ' + obj.llm_mode;
+          // 第二次提问时 #mode 可能已被统计更新重建，需判空
+          const modeEl = document.getElementById('mode');
+          const badge = document.getElementById('modeBadge');
+          if (modeEl) modeEl.textContent = obj.llm_mode;
+          if (badge) badge.textContent = 'LLM: ' + obj.llm_mode;
         } else if (obj.type === 'trace') {
           addEvent(obj.event);
         } else if (obj.type === 'token') {
@@ -213,7 +216,14 @@ async function send(e) {
       meta.textContent = `耗时 ${done.latency_ms}ms${done.tool_result ? ' · 调用工具 ' + done.tool_result.tool : ''}${done.refusal ? ' · 拒答（知识库未收录）' : ''}`;
       ai.querySelector('.bubble').appendChild(meta);
       const stats = await (await fetch('/api/stats')).json();
-      document.getElementById('stats').innerHTML =
+      // 只更新统计行，不整体替换 #stats（其中含 id=mode 的模式标签）
+      let statsLine = document.getElementById('statsLine');
+      if (!statsLine) {
+        statsLine = document.createElement('div');
+        statsLine.id = 'statsLine';
+        document.getElementById('stats').insertBefore(statsLine, document.getElementById('stats').firstChild);
+      }
+      statsLine.innerHTML =
         `累计请求 ${stats.queries_total} · 工具调用 ${stats.tool_calls} · 拒答 ${stats.refusals}<br>` +
         `JSON 修复率 ${stats.json_first_pass_failure_rate ?? 0} · rerank 降级 ${stats.rerank_fallbacks}`;
     }
