@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_timeout: float = 10.0
 
+    # ---------- 扫描件 OCR（视觉模型兜底） ----------
+    ocr_model: str = "qwen-vl-max-latest"  # 与 LLM 同端点；需该模型有额度
+    ocr_cache_dir: str = str(BASE_DIR / "data" / "ocr_cache")
+
     # ---------- 摄取 ----------
     chunk_size: int = 450  # 按中文政策条文实测 300/450/800 对比后取 450，见 eval 报告
     chunk_overlap: int = 60

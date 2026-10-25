@@ -71,7 +71,28 @@ def test_metadata_extract_and_invalid():
     assert len(meta.file_hash) == 64
 
 
-async def test_hybrid_city_boost_and_stale_penalty(components):
+def test_metadata_dirty_text_fallback():
+    """无元数据头的真实公文（OCR 转录形态）：从正文兜底抽取文号/日期/标题/城市。"""
+    from app.ingestion.metadata import extract_metadata
+
+    content = (
+        "杭州住房公积金管理委员会文件\n"
+        "杭房公委〔2023〕8号\n"
+        "杭州住房公积金管理委员会关于调整住房公积金租赁提取政策的通知\n"
+        "各缴存单位、缴存人：\n"
+        "一、调整住房公积金无房租赁提取限额标准，杭州市区为2000元/月。\n"
+        "五、本通知自2024年1月1日起实施。\n"
+    )
+    meta = extract_metadata("hz_rent_limit_2023.pdf", content)
+    assert meta.doc_no == "杭房公委〔2023〕8号"
+    assert meta.effective_date == "2024-01-01"
+    assert "租赁提取政策" in meta.title
+    assert meta.city == "杭州"
+    assert meta.domain == "公积金"
+    assert meta.is_valid  # 无废止字样默认现行有效
+
+
+async def test_hybrid_city_boost_and_real_corpus(components):
     retriever = components["retriever"]
     # 城市限定：北京的租房题应召回北京文件
     r = await retriever.search(
@@ -79,16 +100,15 @@ async def test_hybrid_city_boost_and_stale_penalty(components):
     )
     assert r.chunks[0].chunk.doc_id == "beijing_rent_extract.md"
 
-    # 时效：杭州租房题检索结果中，2025 新版应排在 2022 废止版之前
+    # 真实语料：杭州租房题应召回真实额度文件（杭房公委〔2023〕8号，市区2000元/月）
     r2 = await retriever.search(
         "杭州公积金租房提取每个月最多能提多少", city="杭州", domain="公积金", use_rerank=False
     )
     titles = [c.chunk.doc_id for c in r2.chunks]
-    assert "hangzhou_rent_extract_2025.md" in titles
-    if "hangzhou_rent_extract_2022.md" in titles:
-        assert titles.index("hangzhou_rent_extract_2025.md") < titles.index(
-            "hangzhou_rent_extract_2022.md"
-        )
+    assert "hz_rent_limit_2023.pdf" in titles
+    top_real = next(c for c in r2.chunks if c.chunk.doc_id == "hz_rent_limit_2023.pdf")
+    assert top_real.chunk.doc_no == "杭房公委〔2023〕8号"
+    assert top_real.chunk.is_valid
 
     # 黑话扩展生效
     r3 = await retriever.search("跳槽了公积金怎么带走", use_rerank=False)

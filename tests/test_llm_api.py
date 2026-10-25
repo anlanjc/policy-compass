@@ -43,7 +43,8 @@ async def test_api_endpoints(temp_env):
 
             chat = (await c.post("/api/chat", json={"question": "杭州公积金租房提取每月最多能提多少"})).json()
             assert chat["answer"] and not chat["refusal"]
-            assert any("租赁提取" in s["title"] for s in chat["sources"])
+            # 真实语料（杭房公委〔2023〕8号）的事实流入答案：额度数字或按实提取规则
+            assert ("2000" in chat["answer"] or "实际房租" in chat["answer"]) and chat["sources"]
             assert chat["latency_ms"] >= 0
 
             # SSE 流式：meta → trace* → token* → done

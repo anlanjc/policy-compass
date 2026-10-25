@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -28,6 +29,8 @@ from ..config import settings
 from .loader import list_corpus, load_file
 from .metadata import PolicyMeta, extract_metadata
 from .splitter import Chunk, split_policy_text
+
+logger = logging.getLogger(__name__)
 
 EmbedFn = Callable[[list[str]], "list[list[float]]"]
 
@@ -103,8 +106,9 @@ class IndexStore:
 
     # ---------- 增量同步 ----------
 
-    async def sync(self, corpus_dir: str | None = None, embed_fn: EmbedFn | None = None) -> SyncReport:
-        """增量同步语料目录。embed_fn 为异步函数（LLM client.embed）。"""
+    async def sync(self, corpus_dir: str | None = None, embed_fn: EmbedFn | None = None,
+                   llm=None) -> SyncReport:
+        """增量同步语料目录。embed_fn 为异步函数；llm 用于扫描件 PDF 的 OCR 兜底。"""
         report = SyncReport()
         embed_fn = embed_fn or self._dummy_embed
         with self._lock:
@@ -114,7 +118,11 @@ class IndexStore:
             }
             seen: set[str] = set()
             for path in list_corpus(corpus_dir or settings.corpus_dir):
-                content = load_file(path)
+                try:
+                    content = await load_file(path, llm=llm)
+                except ValueError as e:
+                    logger.warning("跳过无法解析的文档 %s: %s", path.name, e)
+                    continue
                 meta = extract_metadata(path.name, content)
                 seen.add(meta.doc_id)
                 old_hash = known.get(meta.doc_id)

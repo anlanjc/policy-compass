@@ -99,7 +99,15 @@ class LLMClient:
                 resp = await self._http.post(url, json=payload)
                 if resp.status_code in RETRYABLE_STATUS:
                     raise LLMError(f"retryable status {resp.status_code}")
-                resp.raise_for_status()
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    # 非重试型 HTTP 错误（鉴权/参数/无权限）统一包装为 LLMError，
+                    # 让上层按"调用失败"降级，而不是裸 httpx 异常
+                    stats.incr("llm_failures")
+                    raise LLMError(
+                        f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    ) from e
                 data = resp.json()
                 usage = data.get("usage") or {}
                 stats.incr("prompt_tokens", usage.get("prompt_tokens", 0))

@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     llm = get_llm()
     store = IndexStore()
     if not store.chunks:
-        report = await store.sync(None, llm.embed)
+        report = await store.sync(None, llm.embed, llm=llm)
         logger.info("语料同步完成: %s", report.as_dict())
     retriever = HybridRetriever(store)
 

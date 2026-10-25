@@ -271,7 +271,7 @@ async def main(argv: list[str] | None = None) -> int:
     llm = get_llm()
     store = IndexStore()
     # 始终增量同步：语料/词典更新后 hash 变化的文档自动重嵌，保证评测对象最新
-    await store.sync(None, llm.embed)
+    await store.sync(None, llm.embed, llm=llm)
 
     from ..retrieval import HybridRetriever
 

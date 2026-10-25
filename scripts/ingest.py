@@ -17,7 +17,7 @@ from app.llm.client import get_llm
 async def main() -> None:
     llm = get_llm()
     store = IndexStore()
-    report = await store.sync(settings.corpus_dir, llm.embed)
+    report = await store.sync(settings.corpus_dir, llm.embed, llm=llm)
     print(
         f"docs: +{len(report.added)} ~{len(report.updated)} -{len(report.removed)} "
         f"| skipped(hash 未变): {report.skipped} | total chunks: {report.total_chunks}"

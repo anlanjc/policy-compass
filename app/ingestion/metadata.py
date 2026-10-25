@@ -41,6 +41,46 @@ _META_PATTERNS = {
     "domain": re.compile(r"【领域】\s*(.+)"),
 }
 
+# ---- 脏文档兜底模式：真实公文（含 OCR 转录文本）没有元数据头，从正文抽取 ----
+_DIRTY_DOC_NO = re.compile(r"[\u4e00-\u9fff]{2,12}〔\d{4}〕\d+号")
+# 施行/实施两种公文表述都接受（实测真实文件两种都在用）
+_DIRTY_EFFECTIVE = re.compile(r"[自](\d{4})年(\d{1,2})月(\d{1,2})日起?(?:实施|施行)")
+_KNOWN_CITIES = ("杭州", "上海", "北京", "深圳", "广州")
+_DOMAIN_KEYWORDS = (("公积金", "公积金"), ("社保", "社保"), ("养老", "社保"),
+                    ("医保", "医保"), ("医疗", "医保"))
+
+
+def _fallback_extract(meta: PolicyMeta, content: str) -> None:
+    """无元数据头时的正文抽取（扫描件 OCR 文本的典型形态）。"""
+    head = content[:600]
+    if not meta.doc_no:
+        m = _DIRTY_DOC_NO.search(content)
+        if m:
+            meta.doc_no = m.group(0)
+    if not meta.effective_date:
+        m = _DIRTY_EFFECTIVE.search(content)
+        if m:
+            meta.effective_date = "%04d-%02d-%02d" % tuple(
+                int(g) for g in m.groups()
+            )
+    if not meta.title:
+        # 红头标题通常在前几行：取首个含"通知/办法/细则/规定/规则/条件"的行
+        for line in head.splitlines()[:6]:
+            line = line.strip()
+            if len(line) >= 8 and re.search(r"通知|办法|细则|规定|规则|条件|指引|规程|说明", line):
+                meta.title = line
+                break
+    if meta.city == "全国" and not content.startswith("【"):
+        for c in _KNOWN_CITIES:
+            if c in head:
+                meta.city = c
+                break
+    if meta.domain == "通用" and not content.startswith("【"):
+        for kw, dom in _DOMAIN_KEYWORDS:
+            if kw in head:
+                meta.domain = dom
+                break
+
 
 def extract_metadata(file_name: str, content: str) -> PolicyMeta:
     meta = PolicyMeta(
@@ -57,6 +97,8 @@ def extract_metadata(file_name: str, content: str) -> PolicyMeta:
             m = pat.match(line)
             if m:
                 setattr(meta, key, m.group(1).strip())
+    if not content.startswith("【"):  # 脏文档（无元数据头，如 OCR 转录的公文）
+        _fallback_extract(meta, content)
     if not meta.title:
         meta.title = file_name
     # 规范化

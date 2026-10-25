@@ -238,13 +238,22 @@ class MockLLMClient(LLMClient):
             {"tool": "housing_loan_quota", "args": args}, ensure_ascii=False
         )
 
-    def _verify(self, user: str) -> str:
-        import jieba
+    @staticmethod
+    def _grams(text: str) -> set[str]:
+        """字符 bigram 集合（去空白）。
 
+        不用 jieba 词级匹配的原因（实测踩坑）：同一字符串在孤立短句与长文本中
+        切分结果不同（"杭房公委〔2025〕4号"孤立切为 杭房/公委，长行中可能是
+        杭房公委），词集交集为空导致原文引用被误判无出处；bigram 与上下文无关。
+        """
+        s = re.sub(r"\s", "", text)
+        return {s[i : i + 2] for i in range(len(s) - 1)}
+
+    def _verify(self, user: str) -> str:
         answer = re.split(r"候选回答[：:]", user, 1)[-1] if "候选回答" in user else ""
         context = user.split("候选回答")[0]
         # 政策场景的忠实度定义：实质性数字/额度结论必须有出处，
-        # 过渡性表述（"根据文件""为您整理"）不在校验范围。
+        # 过渡性表述（"根据文件""为您整理"）与程序性兜底话术不在校验范围。
         substantial = re.compile(r"[\d〇一二三四五六七八九十百]+|元|万|倍|条|个月|工作日")
         boilerplate = re.compile(r"热线|以.{0,12}为准|咨询|仅供参考")
         sentences = [
@@ -253,15 +262,18 @@ class MockLLMClient(LLMClient):
             if len(s) >= 8 and substantial.search(s) and not boilerplate.search(s)
         ]
         unsupported = []
-        ctx_lines = [c for c in context.split("\n") if len(c) > 20]
+        # 不设最短行过滤：OCR 公文中"ZJAC16-2025-0302"、文号行等关键出处
+        # 恰恰是短行（曾被 >20 过滤丢弃导致原文引用被误判无出处）；
+        # 0.6 的 bigram 重叠比率对短行同样是强判据，不会误放行
+        ctx_lines = [c for c in context.split("\n") if len(c) >= 6]
+        ctx_grams = [self._grams(c) for c in ctx_lines]
         for s in sentences:
-            tokens = {t for t in jieba.lcut(s) if len(t) >= 2}
-            if not tokens:
+            grams = self._grams(s)
+            if not grams:
                 continue
+            # 与任一上下文行的 bigram 重叠率 ≥ 0.6 视为有出处
             supported = any(
-                len(tokens & {t for t in jieba.lcut(c) if len(t) >= 2})
-                >= max(2, int(len(tokens) * 0.5))
-                for c in ctx_lines
+                len(grams & cg) / len(grams) >= 0.6 for cg in ctx_grams if cg
             )
             if not supported:
                 unsupported.append(s[:30])
@@ -326,6 +338,7 @@ class MockLLMClient(LLMClient):
             content_lines = [
                 l for l in lines
                 if not l.startswith("《") and "现行有效" not in l and "已废止" not in l
+                and not re.match(r"^[-—－]\s*\d+\s*[-—－]$", l.strip())  # OCR 页脚
             ]
             sentences = [
                 s for s in re.split(r"[。]", "\n".join(content_lines)) if len(s.strip()) >= 10
