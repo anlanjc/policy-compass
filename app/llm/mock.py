@@ -246,10 +246,11 @@ class MockLLMClient(LLMClient):
         # 政策场景的忠实度定义：实质性数字/额度结论必须有出处，
         # 过渡性表述（"根据文件""为您整理"）不在校验范围。
         substantial = re.compile(r"[\d〇一二三四五六七八九十百]+|元|万|倍|条|个月|工作日")
+        boilerplate = re.compile(r"热线|以.{0,12}为准|咨询|仅供参考")
         sentences = [
             s
             for s in re.split(r"[。；\n]", answer)
-            if len(s) >= 8 and substantial.search(s)
+            if len(s) >= 8 and substantial.search(s) and not boilerplate.search(s)
         ]
         unsupported = []
         ctx_lines = [c for c in context.split("\n") if len(c) > 20]
