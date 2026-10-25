@@ -160,6 +160,35 @@ class ToolCall(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict, description="工具参数")
 
 
+def _coerce_args(impl, args: dict[str, Any]) -> dict[str, Any]:
+    """按工具签名防御性转换模型传参。
+
+    真实模型（实测 deepseek-v4）常把数字传成字符串（"40000"）、years 传成
+    "5.0"、多传不存在的关键字——直接 **args 会 TypeError。此处：
+    按类型注解转换 / 丢弃未知键，转换失败保留原值让工具自身校验兜底。
+    """
+    import inspect
+
+    sig = inspect.signature(impl)
+    coerced: dict[str, Any] = {}
+    for k, v in args.items():
+        param = sig.parameters.get(k)
+        if param is None:
+            continue  # 模型幻觉出的参数直接丢弃
+        ann = param.annotation
+        try:
+            if ann in (float, "float | None") and not isinstance(v, (int, float)):
+                v = float(str(v).replace("万", "e4").replace("，", "").strip() or 0)
+            elif ann is int and not isinstance(v, int):
+                v = int(float(v))
+            elif ann is bool and isinstance(v, str):
+                v = v.strip().lower() in ("true", "1", "yes", "是")
+        except (TypeError, ValueError):
+            pass  # 转换失败原样传，由工具内的参数校验返回结构化错误
+        coerced[k] = v
+    return coerced
+
+
 def execute_tool(call: ToolCall) -> dict[str, Any]:
     """执行工具并记录统计；未知工具/执行异常返回结构化错误（不抛出，链路不中断）。"""
     stats.incr("tool_calls")
@@ -167,7 +196,7 @@ def execute_tool(call: ToolCall) -> dict[str, Any]:
     if impl is None:
         return {"ok": False, "error": f"未知工具: {call.tool}"}
     try:
-        return impl(**call.args)
+        return impl(**_coerce_args(impl, call.args))
     except TypeError as e:
         return {"ok": False, "error": f"参数不匹配: {e}"}
 
