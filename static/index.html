@@ -100,6 +100,11 @@ const btnEl = document.getElementById('btn');
 document.querySelectorAll('.suggestion').forEach(s =>
   s.addEventListener('click', () => { qEl.value = s.textContent; send(); }));
 
+// 回车直接发送（不依赖表单默认提交，兼容所有浏览器内核）
+qEl.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter') { ev.preventDefault(); send(); }
+});
+
 function addUser(text) {
   const div = document.createElement('div');
   div.className = 'msg user';
@@ -184,6 +189,9 @@ async function send(e) {
         } else if (obj.type === 'correction') {
           answer = obj.answer;
           textEl.textContent = answer;
+        } else if (obj.type === 'error') {
+          answer = '服务内部错误：' + (obj.detail || '未知');
+          textEl.textContent = answer;
         } else if (obj.type === 'done') {
           done = obj;
         }
@@ -210,8 +218,20 @@ async function send(e) {
         `JSON 修复率 ${stats.json_first_pass_failure_rate ?? 0} · rerank 降级 ${stats.rerank_fallbacks}`;
     }
   } catch (err) {
-    textEl.textContent = '连接失败：' + err.message + '（请确认服务已启动）';
     ai.querySelector('.cursor').remove();
+    // 自动探测失败原因，给出可操作的提示
+    let hint;
+    if (location.protocol === 'file:') {
+      hint = '你是直接双击打开的本文件（file:// 协议），无法访问后端。请改为：启动服务后浏览器访问 http://127.0.0.1:8000';
+    } else {
+      try {
+        const h = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
+        hint = h.ok ? '连接中断：' + err.message : '后端服务未响应（可能已停止）。请重新运行 python scripts/serve.py 后刷新本页';
+      } catch {
+        hint = '后端服务未启动或不可达。请在项目目录运行 python scripts/serve.py，然后刷新本页；若从其他设备访问，请用这台电脑的局域网 IP（ipconfig 查看）替换 127.0.0.1';
+      }
+    }
+    textEl.textContent = '❌ ' + hint;
   }
   btnEl.disabled = false;
   qEl.focus();
