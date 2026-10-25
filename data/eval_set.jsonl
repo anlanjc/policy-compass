@@ -1,0 +1,30 @@
+{"id": 1, "type": "fact", "question": "杭州公积金租房提取每个月最多能提多少", "expect_docs": ["hangzhou_rent_extract_2025.md"], "expect_keywords": ["1500"], "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 2, "type": "fact", "question": "北京租房提取公积金每月限额是多少", "expect_docs": ["beijing_rent_extract.md"], "expect_keywords": ["2000"], "expect_route": {"city": "北京", "domain": "公积金"}}
+{"id": 3, "type": "fact", "question": "夫妻双方都在上海缴存公积金，买房子最多能贷款多少", "expect_docs": ["shanghai_loan_quota.md"], "expect_keywords": ["100万"], "expect_route": {"city": "上海", "domain": "公积金"}}
+{"id": 4, "type": "fact", "question": "杭州公积金贷款额度是按什么方法计算的", "expect_docs": ["hangzhou_loan_quota.md"], "expect_keywords": ["15"], "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 5, "type": "fact", "question": "公积金异地转移接续一般多少个工作日能办完", "expect_docs": ["national_transfer_process.md"], "expect_keywords": ["11"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 6, "type": "fact", "question": "北京公积金贷款额度是怎么确定的", "expect_docs": ["beijing_loan_quota.md"], "expect_keywords": ["10万"], "expect_route": {"city": "北京", "domain": "公积金"}}
+{"id": 7, "type": "compare", "question": "北京和上海租房提取公积金的额度分别是多少", "expect_docs": ["beijing_rent_extract.md", "shanghai_rent_extract.md"], "expect_keywords": ["2000", "3000"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 8, "type": "compare", "question": "公积金贷款和商业贷款利率差多少", "expect_docs": ["national_loan_vs_commercial.md"], "expect_keywords": ["2.85"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 9, "type": "compare", "question": "杭州和上海的公积金贷款额度规则有什么区别", "expect_docs": ["hangzhou_loan_quota.md", "shanghai_loan_quota.md"], "expect_keywords": ["15", "10"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 10, "type": "compare", "question": "社保断缴对买房和买车资格分别有什么影响", "expect_docs": ["national_break_impact.md"], "expect_keywords": ["购房", "购车"], "expect_route": {"city": "全国", "domain": "社保"}}
+{"id": 11, "type": "calc", "question": "我杭州公积金余额4万，缴了5年，月薪2万，最多能贷多少", "expect_docs": ["hangzhou_loan_quota.md"], "expect_tool": "housing_loan_quota", "expect_quota_wan": 60.0, "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 12, "type": "calc", "question": "我和爱人都缴上海公积金，两人账户合计12万，最多能贷多少", "expect_docs": ["shanghai_loan_quota.md"], "expect_tool": "housing_loan_quota", "expect_quota_wan": 100.0, "expect_route": {"city": "上海", "domain": "公积金"}}
+{"id": 13, "type": "calc", "question": "北京公积金缴存8年账户余额9万，能贷多少", "expect_docs": ["beijing_loan_quota.md"], "expect_tool": "housing_loan_quota", "expect_quota_wan": 80.0, "expect_route": {"city": "北京", "domain": "公积金"}}
+{"id": 14, "type": "calc", "question": "我一个人的上海公积金账户有6万余额，能贷多少", "expect_docs": ["shanghai_loan_quota.md"], "expect_tool": "housing_loan_quota", "expect_quota_wan": 50.0, "expect_route": {"city": "上海", "domain": "公积金"}}
+{"id": 15, "type": "calc", "question": "杭州公积金余额2万能贷多少", "expect_docs": ["hangzhou_loan_quota.md"], "expect_tool": "housing_loan_quota", "expect_quota_wan": 30.0, "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 16, "type": "calc", "question": "杭州夫妻双方公积金账户合计8万都缴存，能贷多少", "expect_docs": ["hangzhou_loan_quota.md"], "expect_tool": "housing_loan_quota", "expect_quota_wan": 120.0, "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 17, "type": "refuse", "question": "上海拍车牌需要什么条件", "expect_docs": [], "expect_refusal": true, "expect_route": {"city": "上海", "domain": "通用"}}
+{"id": 18, "type": "refuse", "question": "个人所得税退税怎么办理", "expect_docs": [], "expect_refusal": true, "expect_route": {"city": "全国", "domain": "通用"}}
+{"id": 19, "type": "refuse", "question": "护照到期了怎么换证", "expect_docs": [], "expect_refusal": true, "expect_route": {"city": "全国", "domain": "通用"}}
+{"id": 20, "type": "refuse", "question": "大学生创业补贴政策有哪些", "expect_docs": [], "expect_refusal": true, "expect_route": {"city": "全国", "domain": "通用"}}
+{"id": 21, "type": "slang", "question": "我跳槽了，杭州的公积金能带到上海吗", "expect_docs": ["hangzhou_transfer.md", "national_transfer_process.md"], "expect_keywords": ["转移"], "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 22, "type": "slang", "question": "社保断了有什么影响", "expect_docs": ["national_break_impact.md"], "expect_keywords": ["医保", "等待"], "expect_route": {"city": "全国", "domain": "社保"}}
+{"id": 23, "type": "slang", "question": "我离职了公积金账户里的钱能全部取出来吗", "expect_docs": ["hangzhou_transfer.md", "national_extract_cases.md"], "expect_keywords": ["封存", "销户"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 24, "type": "slang", "question": "五险一金具体都包括什么", "expect_docs": ["national_five_insurances.md"], "expect_keywords": ["养老", "医疗"], "expect_route": {"city": "全国", "domain": "通用"}}
+{"id": 25, "type": "slang", "question": "社保基数是怎么定的", "expect_docs": ["national_contribution_base.md"], "expect_keywords": ["60%", "300%", "平均工资"], "expect_route": {"city": "全国", "domain": "社保"}}
+{"id": 26, "type": "slang", "question": "外地社保转到上海算不算上海连续缴纳", "expect_docs": ["shanghai_social_transfer.md"], "expect_keywords": ["不计入", "不算"], "expect_route": {"city": "上海", "domain": "社保"}}
+{"id": 27, "type": "timeliness", "question": "杭州租房提取现在的额度标准是多少", "expect_docs": ["hangzhou_rent_extract_2025.md"], "expect_keywords": ["1500"], "not_expect_docs": ["hangzhou_rent_extract_2022.md"], "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 28, "type": "timeliness", "question": "杭州公积金租房提取最新政策每月能提多少", "expect_docs": ["hangzhou_rent_extract_2025.md"], "expect_keywords": ["1500"], "not_expect_docs": ["hangzhou_rent_extract_2022.md"], "expect_route": {"city": "杭州", "domain": "公积金"}}
+{"id": 29, "type": "timeliness", "question": "上海居转户对社保基数有什么要求", "expect_docs": ["shanghai_settlement.md"], "expect_keywords": ["2倍", "1倍"], "expect_route": {"city": "上海", "domain": "社保"}}
+{"id": 30, "type": "timeliness", "question": "医保断缴超过三个月再续保要等多久才能报销", "expect_docs": ["national_break_impact.md"], "expect_keywords": ["3个月", "3 个月", "等待期"], "expect_route": {"city": "全国", "domain": "医保"}}

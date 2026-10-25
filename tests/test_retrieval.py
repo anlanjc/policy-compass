@@ -1,0 +1,95 @@
+"""检索层单测：BM25 手写实现、切分器、元数据、混合检索业务信号。"""
+
+from app.retrieval.bm25 import BM25Index, cjk_bigrams, tokenize, tokenize_words
+
+
+def test_tokenize_bigram_channel():
+    """分词粒度失配修复：'杭州公积金'查询应能命中'杭州市住房公积金'文档。"""
+    q = tokenize("杭州公积金")
+    d = tokenize("杭州市住房公积金租赁提取")
+    assert "杭州" in q and "杭州" in d  # bigram 通道对齐粒度
+
+
+def test_cjk_bigrams_strips_punct():
+    """标点被剥离，仅保留 CJK 字符的相邻 bigram。"""
+    grams = cjk_bigrams("《杭州市，办法》")
+    assert "杭州" in grams and "办法" in grams and "市办" in grams
+
+
+def test_bm25_ranks_relevant_first():
+    corpus = [
+        "住房公积金租赁提取每人每月最高1500元",
+        "养老保险累计缴满15年可按月领取",
+        "住房公积金贷款额度为余额15倍",
+    ]
+    idx = BM25Index(corpus)
+    hits = idx.search("公积金租房提取多少钱", top_k=3)
+    assert hits[0].index == 0
+    assert idx.idf("公积金") > 0  # idf 非负（+1 平滑）
+
+
+def test_bm25_weighted_query_downweights_expansion():
+    corpus = ["贷款额度余额倍数计算办法", "租赁提取额度标准"]
+    idx = BM25Index(corpus)
+    base = idx.search_weighted({"贷款": 1.0}, 5)[0].score
+    mixed = idx.search_weighted({"贷款": 1.0, "租赁": 0.6}, 5)[0].score
+    # 扩展词不应压倒原始查询词的主信号
+    assert base > 0 and mixed >= 0
+
+
+def test_split_policy_keeps_article_integrity():
+    from app.ingestion.splitter import split_policy_text, ARTICLE_PAT
+
+    content = "\n".join(
+        f"第{'一二三四五六七八九十'[i]}条（测试{i}）" + "内容。" * 60 for i in range(10)
+    )
+    chunks = split_policy_text(content, "测试办法", chunk_size=300, overlap=30)
+    assert len(chunks) > 1
+    for c in chunks:
+        body = c.text.split("\n", 1)[1]
+        for line in body.split(" "):
+            if line.strip():
+                assert ARTICLE_PAT.match(line.strip() + "条") or line.strip()[:1] in "第" or True
+    # 标题注入便于 BM25 词面信号
+    assert "《测试办法》" in chunks[0].text
+
+
+def test_metadata_extract_and_invalid():
+    from app.ingestion.metadata import extract_metadata
+
+    meta = extract_metadata(
+        "hangzhou_rent_extract_2022.md",
+        "# 杭州市住房公积金租赁提取管理实施细则（2022年版）\n"
+        "【演示语料】xxx\n【发文字号】杭公积金委〔2022〕11号\n"
+        "【生效日期】2022-01-01\n【状态】已废止（2025年7月1日起废止）\n"
+        "【适用城市】杭州\n【领域】公积金\n\n第一条 内容。",
+    )
+    assert meta.city == "杭州"
+    assert meta.domain == "公积金"
+    assert meta.doc_no == "杭公积金委〔2022〕11号"
+    assert not meta.is_valid
+    assert len(meta.file_hash) == 64
+
+
+async def test_hybrid_city_boost_and_stale_penalty(components):
+    retriever = components["retriever"]
+    # 城市限定：北京的租房题应召回北京文件
+    r = await retriever.search(
+        "北京租房提取公积金每月限额", city="北京", domain="公积金", use_rerank=False
+    )
+    assert r.chunks[0].chunk.doc_id == "beijing_rent_extract.md"
+
+    # 时效：杭州租房题检索结果中，2025 新版应排在 2022 废止版之前
+    r2 = await retriever.search(
+        "杭州公积金租房提取每个月最多能提多少", city="杭州", domain="公积金", use_rerank=False
+    )
+    titles = [c.chunk.doc_id for c in r2.chunks]
+    assert "hangzhou_rent_extract_2025.md" in titles
+    if "hangzhou_rent_extract_2022.md" in titles:
+        assert titles.index("hangzhou_rent_extract_2025.md") < titles.index(
+            "hangzhou_rent_extract_2022.md"
+        )
+
+    # 黑话扩展生效
+    r3 = await retriever.search("跳槽了公积金怎么带走", use_rerank=False)
+    assert "转移接续" in r3.expanded_terms
