@@ -125,10 +125,15 @@ async def ablation(store, cases: list[dict]) -> list[dict]:
             retriever._vector_search = orig_vec  # type: ignore
         results.append(res)
 
-    await run_variant("bm25_only", bm25=True, vec=False, boost=False)
-    await run_variant("vector_only", bm25=False, vec=True, boost=False)
-    await run_variant("hybrid_no_boost", bm25=True, vec=True, boost=False)
-    await run_variant("hybrid_full", bm25=True, vec=True, boost=True)
+    if not settings.embed_enabled:
+        # 无 embedding 额度：向量路休眠，消融退化为 BM25 加权前后对比
+        await run_variant("bm25_plain", bm25=True, vec=False, boost=False)
+        await run_variant("bm25+业务加权", bm25=True, vec=False, boost=True)
+    else:
+        await run_variant("bm25_only", bm25=True, vec=False, boost=False)
+        await run_variant("vector_only", bm25=False, vec=True, boost=False)
+        await run_variant("hybrid_no_boost", bm25=True, vec=True, boost=False)
+        await run_variant("hybrid_full", bm25=True, vec=True, boost=True)
 
     settings.city_match_boost, settings.domain_match_boost = city_boost, domain_boost
     settings.title_match_boost, settings.invalid_doc_penalty = title_boost, invalid_pen
@@ -271,7 +276,8 @@ async def main(argv: list[str] | None = None) -> int:
     from ..retrieval import HybridRetriever
 
     retriever = HybridRetriever(store)
-    retrieval_res = await eval_retrieval(retriever, cases, variant="hybrid_full")
+    current_label = "hybrid_full" if settings.embed_enabled else "bm25+业务加权"
+    retrieval_res = await eval_retrieval(retriever, cases, variant=current_label)
     abl = await ablation(store, cases)
     e2e = None
     if not args.retrieval:

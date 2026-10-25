@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     json_repair_rounds: int = 2  # 结构化输出解析失败后的纠错重试轮数
 
     # ---------- Embedding（留空复用 LLM 配置） ----------
+    embed_enabled: bool = True  # 无 embedding 额度时置 false：向量路休眠，检索退化为 BM25+业务加权
     embed_api_base: str = ""
     embed_api_key: str = ""
     embed_model: str = "BAAI/bge-m3"

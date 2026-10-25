@@ -226,6 +226,9 @@ class LLMClient:
     # ---------- Embedding ----------
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not settings.embed_enabled:
+            # 零向量降级：向量检索相似度恒为 0 被过滤，检索退化为纯 BM25（架构预留路径）
+            return [[0.0] * settings.embed_dim for _ in texts]
         results: list[list[float]] = []
         for i in range(0, len(texts), settings.embed_batch_size):
             batch = texts[i : i + settings.embed_batch_size]
