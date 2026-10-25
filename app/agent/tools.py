@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
 
@@ -163,12 +164,13 @@ class ToolCall(BaseModel):
 def _coerce_args(impl, args: dict[str, Any]) -> dict[str, Any]:
     """按工具签名防御性转换模型传参。
 
-    真实模型（实测 deepseek-v4）常把数字传成字符串（"40000"）、years 传成
-    "5.0"、多传不存在的关键字——直接 **args 会 TypeError。此处：
-    按类型注解转换 / 丢弃未知键，转换失败保留原值让工具自身校验兜底。
+    真实模型（实测 deepseek-v4）常见三类偏差：数字传字符串（"40000"）、
+    自创参数别名（salary）、多传不存在的键。此处依次处理：
+    别名归一 → 按类型注解转换 → 丢弃未知键；转换失败保留原值让工具自身校验兜底。
     """
     import inspect
 
+    args = {ARG_ALIASES.get(k, k): v for k, v in args.items()}
     sig = inspect.signature(impl)
     coerced: dict[str, Any] = {}
     for k, v in args.items():
@@ -202,14 +204,25 @@ def execute_tool(call: ToolCall) -> dict[str, Any]:
 
 
 TOOL_PROMPT = (
-    "#task=tool\n你是政策计算工具的选择器。根据用户问题选择一个工具并抽取参数：\n"
-    f"可用工具：{TOOL_NAMES}\n"
-    "- rent_extract_limit：查询租房提取限额（问题涉及 租房/房租/提取 标准时）\n"
-    "- housing_loan_quota：测算贷款额度（问题涉及 贷款/能贷/额度 且含余额等数字时）\n"
-    "数字换算：'4万'→40000，'两万'→20000，'5年'→years=5。\n"
-    "问题中未出现的可选参数不要编造，余额等必填参数缺失时仍输出工具名并把 balance 置 null。"
-    "若问题不需要任何计算工具，输出 {\"tool\": \"none\", \"args\": {}}。"
+    "#task=tool\n你是政策计算工具的选择器。根据用户问题选择一个工具并抽取参数。\n"
+    "可用工具及参数 schema（参数名必须完全一致，不得自创别名如 salary）：\n"
+    f"{json.dumps(TOOL_SCHEMAS, ensure_ascii=False, indent=1)}\n"
+    "规则：\n"
+    "- city 必填（用户未明说时根据语境推断，如'我杭州…'→杭州）；\n"
+    "- balance/monthly_income 单位为元：'4万'→40000，'2万'→20000；\n"
+    "- 未出现的可选参数不要编造；不需要计算工具时输出 {\"tool\": \"none\", \"args\": {}}。"
 )
+
+# 常见参数别名归一（模型自创同义词的防御）
+ARG_ALIASES = {
+    "salary": "monthly_income",
+    "income": "monthly_income",
+    "month_income": "monthly_income",
+    "account_balance": "balance",
+    "money": "balance",
+    "is_married": "is_family",
+    "family": "is_family",
+}
 
 
 async def select_tool(llm, question: str) -> ToolCall:

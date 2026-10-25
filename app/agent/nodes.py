@@ -210,6 +210,12 @@ def make_nodes(retriever, llm):
         call = await select_tool(llm, state["question"])
         if call.tool == "none":
             return {"tool_result": None, "events": [_ev("tool", tool="none")]}
+        # 确定性上下文补全：模型常省略 city（默认它会被带入）——
+        # 用意图路由的城市结果回填，缺失参数靠硬编码兜底而非指望模型自觉
+        if "city" not in call.args or not call.args.get("city"):
+            route_city = (state.get("route") or {}).get("city") or ""
+            if route_city and route_city != "全国":
+                call.args["city"] = route_city
         result = execute_tool(call)
         return {
             "tool_result": {"tool": call.tool, "args": call.args, "result": result},
