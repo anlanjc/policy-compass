@@ -6,7 +6,7 @@
 - 参数抽取走 chat_json 自校验链路；工具执行是纯函数，可单测、可复算；
 - 同一套工具通过 MCP server（mcp/server.py）暴露给外部 Agent 生态。
 
-限额表/倍数与演示语料严格一致（data/corpus），答案可交叉验证。
+限额表/倍数与真实语料一致（data/corpus 同名文件，来源见各条注释），答案可交叉验证。
 """
 
 from __future__ import annotations
@@ -39,10 +39,25 @@ RENT_LIMITS: dict[str, dict[str, Any]] = {
              "note": "成都公积金委2026年调整通知（据人民网/成都日报转载）：租住商品住房每月不超过1800元、年累计2.16万元；多子女家庭上浮50%（每月不超过2700元）"},
 }
 
-# 贷款额度规则：杭州/上海为演示口径（与演示语料一致）；北京/广州取自真实政策原文。
+# 贷款额度规则：数字全部取自真实政策原文/权威转载（2026-10-29 抓取，出处见注释与 data/corpus 同名文件）。
+# 原文没有的字段宁缺毋滥：沪杭现行文件均未载收入比条款，不再沿用演示口径的 0.6/0.5。
 LOAN_RULES: dict[str, dict[str, Any]] = {
-    "杭州": {"method": "余额倍数法", "multiplier": 15, "cap_single": 600000, "cap_family": 1200000, "income_ratio": 0.6},
-    "上海": {"method": "余额倍数法", "multiplier": 10, "cap_single": 500000, "cap_family": 1000000, "income_ratio": 0.5},
+    # 杭房公委〔2026〕1号（2026-04-01 实施，杭州市政府公报刊载）：倍数 15→20，
+    # 贷款最高额度 130→180 万、职工个人可贷额度 ≤90 万。官方口径为"申请贷款时近12个月
+    # （不含申请当月）账户月均余额×倍数"（不含一次性补缴、不足12个月按实际月数、
+    # 结果四舍五入精确到千位）——本工具按传入的当前余额近似并在 note 披露；新市民/青年+20%、
+    # 多子女/高层次人才+50%、绿建/以旧换新+20%，择高叠加最高+70%（见语料）。
+    "杭州": {"method": "余额倍数法", "multiplier": 20, "round_to": 1000,
+             "cap_single": 900000, "cap_family": 1800000,
+             "note": "杭州按申请贷款时近12个月账户月均余额×20倍测算（本工具按当前账户余额近似），"
+                     "家庭最高180万元、个人不超过90万元；新市民/青年人+20%、多子女/高层次人才+50%等可上浮"},
+    # 沪公积金管委会〔2026〕1号（2026-02-26 实施，两源交叉转载）：首套基本额度个人最高100万/
+    # 家庭200万，缴补充公积金再+20/+40万（含补充合计120/240万）；二套80/160（+20/+40）。
+    # 通知未载余额倍数/收入比条款（官网 shgjj.com 抓取不可达），按最高限额口径计算，不再沿用演示口径 ×10；
+    # 多子女/绿色建筑最高上浮35%（首套含补充最高324万）。
+    "上海": {"method": "固定额度法", "cap_single": 1000000, "cap_family": 2000000,
+             "note": "上海按首套最高限额口径：个人最高100万元/家庭最高200万元（缴交补充公积金另+20/+40万元；"
+                     "沪公积金管委会〔2026〕1号），实际额度还受余额倍数、房价成数、还款能力等约束"},
     # 京房公积金〔2018〕51号：每缴存一年可贷10万（不满一年按一年），最高120万，月供≤月收入60%
     "北京": {"method": "缴存年限法", "per_year": 100000, "cap_single": 1200000, "cap_family": 1200000, "income_ratio": 0.6},
     # 穗公积金中心规字〔2024〕2号：一人申请最高80万，两人及以上共同申请160万（原文无余额倍数公式）
@@ -93,6 +108,9 @@ def housing_loan_quota(
 
     if rule["method"] == "余额倍数法":
         by_balance = balance * rule["multiplier"]
+        if rule.get("round_to"):
+            # 杭州"计算结果四舍五入，精确到千位"（杭房公委〔2026〕1号配套细则）
+            by_balance = round(by_balance / rule["round_to"]) * rule["round_to"]
         calc_detail["by_balance"] = f"{balance:.0f} × {rule['multiplier']} = {by_balance:.0f}"
         quota = min(by_balance, cap)
     elif rule["method"] == "缴存年限法":
@@ -102,7 +120,7 @@ def housing_loan_quota(
         by_years = effective_years * rule["per_year"]
         quota = min(by_years, cap)
         calc_detail["by_years"] = f"缴存{effective_years}年 × {rule['per_year']:.0f} = {by_years:.0f}"
-    else:  # 固定额度法（广州）：一人/多人申请的固定上限，原文无额度公式
+    else:  # 固定额度法（广州/上海）：按申请情形的固定上限，原文无额度公式
         quota = cap
     calc_detail["cap"] = f"{'家庭' if is_family else '个人'}上限 {cap:.0f}"
 
@@ -114,7 +132,7 @@ def housing_loan_quota(
             warn = (f"按30年等额本息月供约{pay:.0f}元，超过月收入{ratio:.0%}的约束"
                     f"（{monthly_income * ratio:.0f}元），实际可贷额度将下调")
 
-    return {
+    result = {
         "ok": True,
         "city": city,
         "method": rule["method"],
@@ -123,6 +141,9 @@ def housing_loan_quota(
         "detail": calc_detail,
         "income_warning": warn,
     }
+    if rule.get("note"):
+        result["note"] = rule["note"]
+    return result
 
 
 TOOL_IMPLS = {
@@ -152,7 +173,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "housing_loan_quota",
-            "description": "按城市规则测算住房公积金贷款额度（余额倍数法/缴存年限法）",
+            "description": "按城市规则测算住房公积金贷款额度（余额倍数法/缴存年限法/固定额度法）",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -4,15 +4,19 @@ from app.agent.tools import ToolCall, execute_tool, housing_loan_quota, rent_ext
 
 
 def test_hangzhou_loan_balance_multiplier():
-    """杭州余额倍数法：4万×15=60万，未超个人上限60万。"""
+    """杭州余额倍数法（杭房公委〔2026〕1号）：4万×20=80万，未超个人上限90万；超限取上限。"""
     r = housing_loan_quota(city="杭州", balance=40000, monthly_income=20000, years=5)
-    assert r["ok"] and r["quota"] == 600000
+    assert r["ok"] and r["quota"] == 800000
+    r2 = housing_loan_quota(city="杭州", balance=60000)
+    assert r2["ok"] and r2["quota"] == 900000  # 6万×20=120万 > 个人上限90万
 
 
-def test_shanghai_family_cap():
-    """上海家庭：12万×10=120万 > 家庭上限100万 → 取上限。"""
+def test_shanghai_fixed_quota():
+    """上海固定额度法（沪公积金管委会〔2026〕1号首套）：个人100万/家庭200万，与余额无关。"""
     r = housing_loan_quota(city="上海", balance=120000, is_family=True)
-    assert r["ok"] and r["quota"] == 1000000
+    assert r["ok"] and r["quota"] == 2000000
+    r2 = housing_loan_quota(city="上海", balance=40000)
+    assert r2["ok"] and r2["quota"] == 1000000
 
 
 def test_beijing_years_method():
@@ -30,8 +34,9 @@ def test_guangzhou_fixed_quota():
 
 
 def test_income_constraint_warning():
-    r = housing_loan_quota(city="杭州", balance=200000, monthly_income=3000)
-    assert r["ok"] and r["income_warning"]  # 月供超收入60%触发提示
+    """收入比约束仅在原文有依据的城市生效（京房公积金〔2018〕51号：月供≤月收入60%）。"""
+    r = housing_loan_quota(city="北京", balance=200000, monthly_income=3000, years=8)
+    assert r["ok"] and r["income_warning"]  # 8年×10万=80万，月供约3305元超收入60%（1800元）
 
 
 def test_missing_balance_returns_structured_error():
@@ -63,7 +68,7 @@ async def test_agent_calc_path(components):
     assert "tool" in events
     tool = state["tool_result"]
     assert tool["tool"] == "housing_loan_quota"
-    assert tool["result"]["quota_wan"] == 60.0
+    assert tool["result"]["quota_wan"] == 80.0  # 4万×20=80万（杭房公委〔2026〕1号）
     assert not state["refusal"]
 
 
