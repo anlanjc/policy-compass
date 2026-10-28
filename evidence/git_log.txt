@@ -1,0 +1,13 @@
+9dbe4da feat(reliability): 故障注入五场景+mock压测（20/50/100并发×零延迟/模拟LLM延迟两轮）——发现并修复库外城市张冠李戴（tool_node防猜守卫+TOOL_PROMPT禁猜城市+mock城市默认全国+生成提示词拦截他城冒充）；runner判分改完整答案（修200字截断误判）+--eval-set/--split/--limit参数；mock embed维度对齐settings（修mock/real混跑崩溃）；llm_trust_env默认False（修Windows系统代理致TLS失败）；llm_mock_delay压测模拟延迟
+ca15cc5 feat(corpus): 多城市真实语料接入（10份真实文件×7城）——京〔2023〕6号/〔2025〕1号直付/〔2018〕51号贷款、沪公积金管委会〔2024〕6号、穗公积金中心规字〔2024〕2号、深公积金规〔2025〕3号、成都2026调整（人民网转载）、国务院条例2026第三次修订；tools.py 限额表换真实数字（沪4000/户、穗2000、蓉1800、深圳比例制不收录），贷款规则北京改真实年限法+新增广州固定额度法；config/metadata 支持成都；lexicon 补12条黑话；v1金标同步（沪3000→4000注明原因）
+04b79c9 fix: requirements 缺失（Docker build 失败）与 README 过期数字（30题→33题/21→22测试）；hybrid 重复注释删除；runner 报告评测集题数改为动态
+39ab52a docs: 项目书（技术栈/架构/流程/设计实现/取舍FAQ/踩坑实录）与代码阅读内化指南（阅读路线/手写清单/增量实验/面试题库）
+272847d docs: 最终真实口径评测数字（端到端93.9%，检索recall@5 93.1%，真实模型dsv4-flash）与真实语料说明
+0d279c8 feat(ingestion): 真实政策语料接入——扫描件PDF视觉OCR管线（pypdf稀疏检测→视觉模型转录→哈希磁盘缓存），脏文档元数据兜底抽取（文号/施行日期/标题/城市），杭州租赁提取垂直换为真实文件（杭房公委〔2023〕8号+〔2025〕4号），工具限额表与评测集对齐真实数字（2000元/月，33题）；fix(mock): verify改bigram匹配修复jieba跨上下文切分不一致与OCR短行出处误判；fix(client): 非重试HTTP错误统一包装LLMError；test: 夹具就地修改全局settings
+6dae94e fix(agent): 真实模型校准——grade 打分锚点收紧避免阈值抖动误拒；verify 明确程序性兜底话术不计入无出处（生成/校验 prompt 对齐）
+7787ebf fix(tools): 完整参数schema入prompt + 参数别名归一 + 路由城市确定性回填——真实模型省略city/自创salary实测修复
+be8fed5 feat(config): EMBED_ENABLED 开关——无 embedding 额度时向量路休眠、检索退化为 BM25+业务加权，消融自动适配
+1392081 fix(tools): 模型传参防御性转换（字符串数字/浮点年份/字符串bool/未知键丢弃）——真实模型对接实测修复
+23ab2dc fix(frontend): 统计面板 innerHTML 重建误删 #mode 导致第二次提问空指针——改增量更新统计行并对 meta 写入判空
+af876a2 fix(frontend): 失败提示自动探测原因（file://打开/服务未启动/跨设备），error 帧渲染，回车发送兼容加固
+6b6f6db feat: 政策罗盘 PolicyCompass —— 跨城市社保公积金 Agentic RAG 问答系统
