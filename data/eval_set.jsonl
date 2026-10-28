@@ -4,7 +4,7 @@
 {"id": 4, "type": "fact", "question": "杭州公积金贷款额度是按什么方法计算的", "expect_docs": ["hangzhou_loan_quota.md"], "expect_keywords": ["15"], "expect_route": {"city": "杭州", "domain": "公积金"}}
 {"id": 5, "type": "fact", "question": "公积金异地转移接续一般多少个工作日能办完", "expect_docs": ["national_transfer_process.md"], "expect_keywords": ["11"], "expect_route": {"city": "全国", "domain": "公积金"}}
 {"id": 6, "type": "fact", "question": "北京公积金贷款额度是怎么确定的", "expect_docs": ["beijing_loan_quota.md"], "expect_keywords": ["10万"], "expect_route": {"city": "北京", "domain": "公积金"}}
-{"id": 7, "type": "compare", "question": "北京和上海租房提取公积金的额度分别是多少", "expect_docs": ["beijing_rent_extract.md", "shanghai_rent_extract.md"], "expect_keywords": ["2000", "3000"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 7, "type": "compare", "question": "北京和上海租房提取公积金的额度分别是多少", "expect_docs": ["beijing_rent_extract.md", "shanghai_rent_extract.md"], "expect_keywords": ["2000", "4000"], "expect_route": {"city": "全国", "domain": "公积金"}, "note": "上海金标2026-10-28由3000改为4000：沪公积金管委会〔2024〕6号自2024-11-01起提额"}
 {"id": 8, "type": "compare", "question": "公积金贷款和商业贷款利率差多少", "expect_docs": ["national_loan_vs_commercial.md"], "expect_keywords": ["2.85"], "expect_route": {"city": "全国", "domain": "公积金"}}
 {"id": 9, "type": "compare", "question": "杭州和上海的公积金贷款额度规则有什么区别", "expect_docs": ["hangzhou_loan_quota.md", "shanghai_loan_quota.md"], "expect_keywords": ["15", "10"], "expect_route": {"city": "全国", "domain": "公积金"}}
 {"id": 10, "type": "compare", "question": "社保断缴对买房和买车资格分别有什么影响", "expect_docs": ["national_break_impact.md"], "expect_keywords": ["购房", "购车"], "expect_route": {"city": "全国", "domain": "社保"}}

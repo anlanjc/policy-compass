@@ -45,7 +45,7 @@ _META_PATTERNS = {
 _DIRTY_DOC_NO = re.compile(r"[\u4e00-\u9fff]{2,12}〔\d{4}〕\d+号")
 # 施行/实施两种公文表述都接受（实测真实文件两种都在用）
 _DIRTY_EFFECTIVE = re.compile(r"[自](\d{4})年(\d{1,2})月(\d{1,2})日起?(?:实施|施行)")
-_KNOWN_CITIES = ("杭州", "上海", "北京", "深圳", "广州")
+_KNOWN_CITIES = ("杭州", "上海", "北京", "深圳", "广州", "成都")
 _DOMAIN_KEYWORDS = (("公积金", "公积金"), ("社保", "社保"), ("养老", "社保"),
                     ("医保", "医保"), ("医疗", "医保"))
 
@@ -102,7 +102,7 @@ def extract_metadata(file_name: str, content: str) -> PolicyMeta:
     if not meta.title:
         meta.title = file_name
     # 规范化
-    if meta.city not in ("杭州", "上海", "北京", "深圳", "广州"):
+    if meta.city not in ("杭州", "上海", "北京", "深圳", "广州", "成都"):
         meta.city = "全国" if meta.city in ("全国", "") else meta.city
     if meta.domain not in ("公积金", "社保", "医保", "通用"):
         meta.domain = "通用"

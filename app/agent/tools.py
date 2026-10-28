@@ -21,20 +21,32 @@ from ..llm.stats import stats
 
 # ---------- 工具实现（纯函数，全部可单测） ----------
 
+# 租赁提取限额：数字全部取自 data/corpus 真实政策原文（来源 URL 见各语料文件头部）。
+# 深圳 2026-10 起无固定月限额——现行《深圳市住房公积金提取管理规定》（深公积金规〔2025〕3号）
+# 第十一条按"申请当月应缴存额的 65%"比例计算，无法折算为固定额度，故不收录（宁缺毋滥，
+# 工具对深圳返回"未收录"并提示咨询公积金中心，语料中的比例规则仍可经检索回答）。
 RENT_LIMITS: dict[str, dict[str, Any]] = {
-    "北京": {"monthly": 2000, "quarterly": 6000, "yearly": 24000, "note": "按季度提取，租住公租房按实际租金不限额"},
-    "上海": {"monthly": 3000, "quarterly": 9000, "yearly": 36000, "note": "支持按月或按季度划转，家庭双人合计可翻倍"},
-    # 杭州：杭房公委〔2023〕8号（2024-01-01 施行）——市区 2000元/月，桐庐/淳安/建德 1200元/月；
-    # 新市民/青年人无房市场租赁可全额提取月缴存额；多孩家庭按标准上浮50%（杭房公委〔2025〕4号）
-    "杭州": {"monthly": 2000, "quarterly": 6000, "yearly": 24000, "note": "市区标准，桐庐淳安建德为1200/月；新市民/青年人可全额提取月缴存额；多孩上浮50%"},
-    "深圳": {"monthly": 2600, "quarterly": 7800, "yearly": 31200, "note": "演示数字"},
-    "广州": {"monthly": 1800, "quarterly": 5400, "yearly": 21600, "note": "演示数字"},
+    "北京": {"monthly": 2000, "quarterly": 6000, "yearly": 24000,
+             "note": "京房公积金发〔2023〕6号：无发票租房提取每人每月2000元；提供发票并备案的按实际月租金提取"},
+    # 上海为"户"口径（含单身家庭），夫妻不翻倍 → family_multiplier=1
+    "上海": {"monthly": 4000, "quarterly": 12000, "yearly": 48000, "family_multiplier": 1,
+             "note": "沪公积金管委会〔2024〕6号：市场租赁每户家庭（含单身）月提取限额4000元；新市民/青年人网签备案可按实际房租提取"},
+    "杭州": {"monthly": 2000, "quarterly": 6000, "yearly": 24000,
+             "note": "杭房公委〔2023〕8号：市区2000元/月，桐庐淳安建德1200元/月；新市民/青年人可全额提取月缴存额；多孩上浮50%（杭房公委〔2025〕4号）"},
+    "广州": {"monthly": 2000, "quarterly": 6000, "yearly": 24000,
+             "note": "穗公积金中心规字〔2024〕2号：无租赁合同或未登记备案的租房提取限额提高至每人每月2000元"},
+    "成都": {"monthly": 1800, "quarterly": 5400, "yearly": 21600,
+             "note": "成都公积金委2026年调整通知（据人民网/成都日报转载）：租住商品住房每月不超过1800元、年累计2.16万元；多子女家庭上浮50%（每月不超过2700元）"},
 }
 
+# 贷款额度规则：杭州/上海为演示口径（与演示语料一致）；北京/广州取自真实政策原文。
 LOAN_RULES: dict[str, dict[str, Any]] = {
     "杭州": {"method": "余额倍数法", "multiplier": 15, "cap_single": 600000, "cap_family": 1200000, "income_ratio": 0.6},
     "上海": {"method": "余额倍数法", "multiplier": 10, "cap_single": 500000, "cap_family": 1000000, "income_ratio": 0.5},
-    "北京": {"method": "缴存年限法", "per_year": 100000, "multiplier": 15, "cap_single": 1200000, "cap_family": 1200000, "income_ratio": 0.6},
+    # 京房公积金〔2018〕51号：每缴存一年可贷10万（不满一年按一年），最高120万，月供≤月收入60%
+    "北京": {"method": "缴存年限法", "per_year": 100000, "cap_single": 1200000, "cap_family": 1200000, "income_ratio": 0.6},
+    # 穗公积金中心规字〔2024〕2号：一人申请最高80万，两人及以上共同申请160万（原文无余额倍数公式）
+    "广州": {"method": "固定额度法", "cap_single": 800000, "cap_family": 1600000},
 }
 
 
@@ -42,14 +54,15 @@ def rent_extract_limit(city: str, is_family: bool = False) -> dict[str, Any]:
     table = RENT_LIMITS.get(city)
     if not table:
         return {"ok": False, "error": f"知识库暂未收录 {city} 的租赁提取限额，请以当地公积金中心公告为准"}
-    limit = table["monthly"] * (2 if is_family else 1)
-    yearly = table["yearly"] * (2 if is_family else 1)
+    fam = table.get("family_multiplier", 2)
+    limit = table["monthly"] * (fam if is_family else 1)
+    yearly = table["yearly"] * (fam if is_family else 1)
     return {
         "ok": True,
         "city": city,
         "monthly_limit": limit,
         "yearly_limit": yearly,
-        "note": table["note"] + ("；夫妻双方均缴存可分别提取" if is_family else ""),
+        "note": table["note"] + ("；夫妻双方均缴存可分别提取" if is_family and fam == 2 else ""),
     }
 
 
@@ -81,22 +94,22 @@ def housing_loan_quota(
     if rule["method"] == "余额倍数法":
         by_balance = balance * rule["multiplier"]
         calc_detail["by_balance"] = f"{balance:.0f} × {rule['multiplier']} = {by_balance:.0f}"
-    else:  # 北京：缴存年限法 + 余额倍数校核，取低
+        quota = min(by_balance, cap)
+    elif rule["method"] == "缴存年限法":
+        # 京房公积金〔2018〕51号：额度=缴存年限×10万（不满一年按一年），上限120万，
+        # 已婚按夫妻缴存年限较长一方核算——原文无余额倍数校核，不再使用演示口径的 ×15
         effective_years = max(years or 1, 1)
         by_years = effective_years * rule["per_year"]
-        by_balance = balance * rule["multiplier"]
-        by_balance = min(by_balance, by_years, cap)
+        quota = min(by_years, cap)
         calc_detail["by_years"] = f"缴存{effective_years}年 × {rule['per_year']:.0f} = {by_years:.0f}"
-        calc_detail["by_balance"] = f"{balance:.0f} × {rule['multiplier']} = {balance * rule['multiplier']:.0f}"
-        calc_detail["rule"] = "年限额度与余额倍数校核取低"
-
-    quota = min(by_balance, cap) if rule["method"] == "余额倍数法" else by_balance
+    else:  # 固定额度法（广州）：一人/多人申请的固定上限，原文无额度公式
+        quota = cap
     calc_detail["cap"] = f"{'家庭' if is_family else '个人'}上限 {cap:.0f}"
 
     warn = ""
-    if monthly_income and monthly_income > 0:
+    ratio = rule.get("income_ratio", 0)
+    if monthly_income and monthly_income > 0 and ratio > 0:
         pay = _monthly_payment(quota, 0.0285, 30)
-        ratio = rule["income_ratio"]
         if pay > monthly_income * ratio:
             warn = (f"按30年等额本息月供约{pay:.0f}元，超过月收入{ratio:.0%}的约束"
                     f"（{monthly_income * ratio:.0f}元），实际可贷额度将下调")

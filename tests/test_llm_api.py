@@ -78,7 +78,9 @@ async def test_api_endpoints(temp_env):
             )
             up = (await c.post("/api/documents", json={"filename": "shenzhen_demo.md", "content": demo})).json()
             assert up["chunks"] >= 1
-            chat2 = (await c.post("/api/chat", json={"question": "深圳租房公积金每月能提多少"})).json()
+            # 查询锚定上传文档标题（暂行办法）：真实深圳语料（65%比例制）入库后，
+            # 泛化的"每月能提多少"不再唯一命中演示文档，标题锚定保证测的是热更新链路
+            chat2 = (await c.post("/api/chat", json={"question": "深圳住房公积金租赁提取暂行办法规定每人每月最高提取多少"})).json()
             assert "2600" in chat2["answer"]
             await c.delete("/api/documents/shenzhen_demo.md")
             gone = (await c.get("/api/documents")).json()["documents"]

@@ -12,5 +12,5 @@ COPY static ./static
 
 EXPOSE 8000
 
-# 首次启动自动增量摄取 data/corpus（含 18 篇演示政策）
+# 首次启动自动增量摄取 data/corpus（真实政策文件 + 演示文档，见 data/corpus 各文件头部来源声明）
 CMD ["python", "scripts/serve.py"]

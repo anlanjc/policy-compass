@@ -16,9 +16,17 @@ def test_shanghai_family_cap():
 
 
 def test_beijing_years_method():
-    """北京年限法：8年×10万=80万；余额9万×15=135万校核；取低=80万。"""
+    """北京年限法（京房公积金〔2018〕51号）：8年×10万=80万，低于上限120万。"""
     r = housing_loan_quota(city="北京", balance=90000, years=8)
     assert r["ok"] and r["quota"] == 800000
+
+
+def test_guangzhou_fixed_quota():
+    """广州固定额度法（穗公积金中心规字〔2024〕2号）：一人80万/两人160万。"""
+    r1 = housing_loan_quota(city="广州", balance=100000)
+    r2 = housing_loan_quota(city="广州", balance=100000, is_family=True)
+    assert r1["ok"] and r1["quota"] == 800000
+    assert r2["ok"] and r2["quota"] == 1600000
 
 
 def test_income_constraint_warning():
@@ -33,7 +41,10 @@ def test_missing_balance_returns_structured_error():
 
 def test_rent_limit_table():
     assert rent_extract_limit("北京")["monthly_limit"] == 2000
-    assert rent_extract_limit("上海", is_family=True)["monthly_limit"] == 6000
+    # 上海为"户"口径（沪公积金管委会〔2024〕6号每户家庭4000元），家庭不翻倍
+    assert rent_extract_limit("上海", is_family=True)["monthly_limit"] == 4000
+    # 深圳无固定限额（比例制），诚实返回未收录
+    assert not rent_extract_limit("深圳")["ok"]
     assert not rent_extract_limit("火星")["ok"]
 
 

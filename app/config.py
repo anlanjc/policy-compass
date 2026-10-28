@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
 
     # 支持的城市与领域（路由与元数据过滤的词表）
-    cities: list[str] = ["杭州", "上海", "北京", "深圳", "广州", "全国"]
+    cities: list[str] = ["杭州", "上海", "北京", "深圳", "广州", "成都", "全国"]
     domains: list[str] = ["公积金", "社保", "医保", "通用"]
 
     @property
