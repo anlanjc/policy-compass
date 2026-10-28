@@ -203,11 +203,11 @@ async def eval_end2end(agent, cases: list[dict]) -> dict:
 
 
 def render_report(retrieval: dict | None, ablations: list[dict] | None,
-                  end2end: dict | None, llm_mode: str) -> str:
+                  end2end: dict | None, llm_mode: str, n_cases: int = 0) -> str:
     lines = [
         "# 评测报告",
         "",
-        f"- 评测集：`data/eval_set.jsonl`（30 题：事实/对比/计算/拒答/黑话/时效）",
+        f"- 评测集：`data/eval_set.jsonl`（{n_cases or len(load_eval_set())} 题：事实/对比/计算/拒答/黑话/时效）",
         f"- LLM 模式：**{llm_mode}**（mock 模式用于链路验证，正式数字请以真实 API 运行）",
         f"- 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
@@ -286,7 +286,7 @@ async def main(argv: list[str] | None = None) -> int:
         agent = PolicyAgent(retriever, llm)
         e2e = await eval_end2end(agent, cases)
 
-    report = render_report(retrieval_res, abl, e2e, settings.effective_llm_mode)
+    report = render_report(retrieval_res, abl, e2e, settings.effective_llm_mode, len(cases))
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8")

@@ -188,7 +188,6 @@ class HybridRetriever:
             sc.fused_score += settings.vector_weight / (k + rank)
 
         # 政策标题=事项名，是比正文更强的主题信号（"租赁提取管理实施细则"）
-        # 政策标题=事项名，是比正文更强的主题信号（"租赁提取管理实施细则"）
         from .bm25 import cjk_bigrams
 
         q_terms = cjk_bigrams(query)

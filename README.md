@@ -37,7 +37,7 @@ flowchart TB
 
     subgraph 支撑层
       ING[摄取管线<br/>条文感知切分<br/>元数据抽取<br/>SQLite 增量索引]
-      EVAL[评估闭环<br/>30 题六类评测集<br/>recall/MRR/消融对比]
+      EVAL[评估闭环<br/>33 题六类评测集<br/>recall/MRR/消融对比]
       TRACE[全链路 Trace<br/>SSE 实时推送<br/>JSONL 留档]
     end
 ```
@@ -133,7 +133,7 @@ LangGraph 原生流式只到节点粒度。`POST /api/chat?stream=true` 复用**
 ## 与 All-in-RAG 教程的关系
 
 - 教程[第四章](https://datawhalechina.github.io/all-in-rag/)讲混合检索原理 → 本项目给出**带业务加权信号与消融数字的工程实现**；
-- 教程第六章讲评估方法论 → 本项目给出**六类 30 题评测集 + 四组消融 + 一键报告**的闭环；
+- 教程第六章讲评估方法论 → 本项目给出**六类 33 题评测集 + 四组消融 + 一键报告**的闭环；
 - 教程 Extra-chapter 欢迎社区投稿 **Agentic RAG** 专题 → 本项目即是该专题的一个完整参考实现（CRAG 编排 + 拒答 + 工具调用）。
 
 ## 目录结构
@@ -149,11 +149,11 @@ policy-compass/
 │   ├── eval/         # 指标 + 消融 + 报告
 │   └── obs/          # trace JSONL
 ├── data/corpus/      # 18 篇政策语料：含 2 份真实红头扫描件 PDF（杭房公委〔2023〕8号/〔2025〕4号，视觉 OCR 摄取）+ 其余演示文档
-├── data/eval_set.jsonl  # 30 题评测集
+├── data/eval_set.jsonl  # 33 题评测集
 ├── mcp/server.py     # 计算工具的 MCP 暴露（可选 pip install "mcp[cli]"）
 ├── static/index.html # 演示前端（打字机 + trace 面板）
 ├── scripts/          # serve / ingest / eval / chat
-└── tests/            # 21 项 pytest
+└── tests/            # 22 项 pytest
 ```
 
 > 语料声明：`data/corpus` 中**杭州租赁提取垂直已替换为真实政策原文**（[杭房公委〔2023〕8号](https://file.m12333.cn/upfile/download/71732f5a-856d-0146-4324-abf02115af01.pdf)、[〔2025〕4号](https://file.m12333.cn/upfile/download/d8f09351-9388-a863-1de2-0b17190b8a0a.pdf)，红头扫描件 PDF 经视觉 OCR 摄取，工具限额表/评测集已对齐真实数字 2000元/月）；其余文档仍为按真实结构编写的演示数据，接入生产请整体替换为官方发布文本。
