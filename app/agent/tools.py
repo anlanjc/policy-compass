@@ -224,6 +224,8 @@ TOOL_PROMPT = (
     f"{json.dumps(TOOL_SCHEMAS, ensure_ascii=False, indent=1)}\n"
     "规则：\n"
     "- city 必填（用户未明说时根据语境推断，如'我杭州…'→杭州）；\n"
+    "- 用户问题中未出现任何支持城市且语境无城市线索时，输出 {\"tool\": \"none\", \"args\": {}}，"
+    "绝不允许猜测城市——把 A 城额度当作 B 城答案等于编造；\n"
     "- balance/monthly_income 单位为元：'4万'→40000，'2万'→20000；\n"
     "- 未出现的可选参数不要编造；不需要计算工具时输出 {\"tool\": \"none\", \"args\": {}}。"
 )

@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-chat"
     llm_timeout: float = 60.0
     llm_max_retries: int = 3  # 网络/限流错误的指数退避重试
+    llm_trust_env: bool = False  # 不读系统/环境代理：Windows 注册表代理会让 dashscope TLS 握手失败（实测踩坑）；需要代理部署时显式置 true
+    llm_mock_delay: float = 0.0  # mock 模式每次 LLM 调用的模拟延迟秒数（压测用，模拟真实 LLM 延迟形态）
     json_repair_rounds: int = 2  # 结构化输出解析失败后的纠错重试轮数
 
     # ---------- Embedding（留空复用 LLM 配置） ----------

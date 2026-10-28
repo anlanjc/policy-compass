@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -43,6 +44,8 @@ class MockLLMClient(LLMClient):
         temperature: float = 0.3,
         max_tokens: int | None = None,
     ) -> str:
+        if settings.llm_mock_delay > 0:
+            await asyncio.sleep(settings.llm_mock_delay)  # 压测：模拟真实 LLM 延迟形态
         # chat_json 会追加 schema system 消息，#task 标记可能在任意 system 中
         system_blob = "".join(
             m["content"] for m in messages if m["role"] == "system"
@@ -77,7 +80,10 @@ class MockLLMClient(LLMClient):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         import jieba
 
-        dim = 256  # mock 用小维度，足够表达词袋信号
+        # 维度必须与 settings.embed_dim 一致：索引库向量宽度按 embed_dim 建，
+        # mock 曾固定 256 维，对真实链路摄取的库（关闭 embedding 时落 embed_dim 维零向量）
+        # 做查询会因维度不匹配直接崩溃（v2 mock 评测实测发现并修复）
+        dim = settings.embed_dim
         out: list[list[float]] = []
         for text in texts:
             vec = np.zeros(dim)
@@ -197,7 +203,9 @@ class MockLLMClient(LLMClient):
         )
 
     def _tool(self, user: str) -> str:
-        city = next((c for c in settings.cities if c in user and c != "全国"), "杭州")
+        # 默认"全国"而非猜测某城：无城市线索时工具返回"未收录"才是诚实行为
+        # （故障注入实测：默认杭州会把杭州额度当作库外城市的答案）
+        city = next((c for c in settings.cities if c in user and c != "全国"), "全国")
         if re.search(r"租房|房租|提取", user) and not re.search(r"贷款|能贷", user):
             args: dict = {"city": city}
             m = re.search(r"(无房|没有房)", user)
@@ -329,7 +337,7 @@ class MockLLMClient(LLMClient):
             num_bonus = 2.0 if re.search(r"\d", s) else 0.0
             # 政策答案句的典型形态：含结论性标志词 + 数字
             concl_bonus = 2.5 if re.search(
-                r"最高|不超过|合计|限额|额度为|上限|不低于|倍|满\d", s
+                r"最高|不超过|合计|限额|额度为|上限|不低于|倍|满\d|起施行|起试行|可贷", s
             ) else 0.0
             return overlap + num_bonus + concl_bonus
 

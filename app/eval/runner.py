@@ -28,9 +28,9 @@ from ..llm.client import get_llm
 EVAL_SET = Path(__file__).resolve().parent.parent.parent / "data" / "eval_set.jsonl"
 
 
-def load_eval_set() -> list[dict]:
+def load_eval_set(path: Path | None = None) -> list[dict]:
     rows = []
-    for line in EVAL_SET.read_text(encoding="utf-8").splitlines():
+    for line in (path or EVAL_SET).read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
             rows.append(json.loads(line))
@@ -151,10 +151,13 @@ async def eval_end2end(agent, cases: list[dict]) -> dict:
         state = await agent.run(c["question"])
         lat = (time.perf_counter() - t0) * 1000
         latencies.append(lat)
+        answer_full = state.get("answer") or ""
         item = {
             "id": c["id"], "type": c["type"], "latency_ms": round(lat, 1),
             "refusal": bool(state.get("refusal")),
-            "answer": (state.get("answer") or "")[:200],
+            # 展示截断 200 字符；关键词判分用完整答案（真实语料答案较长，
+            # 数字常在 200 字之后——曾因对截断文本判分导致 mock 误判 10 条，v2 评测时修复）
+            "answer": answer_full[:200],
             "sources": [s.get("title", "") for s in state.get("sources", [])],
             "tool": (state.get("tool_result") or {}).get("tool"),
             "tool_result": (state.get("tool_result") or {}).get("result"),
@@ -171,7 +174,7 @@ async def eval_end2end(agent, cases: list[dict]) -> dict:
                 and abs(quota - c["expect_quota_wan"]) < 0.6
             )
         else:
-            answer = item["answer"]
+            answer = answer_full
             item["pass"] = any(k in answer for k in c.get("expect_keywords", [])) or (
                 c["type"] == "compare" and all(
                     k in answer for k in c.get("expect_keywords", [])
@@ -264,10 +267,20 @@ def render_report(retrieval: dict | None, ablations: list[dict] | None,
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PolicyCompass 评测")
     parser.add_argument("--retrieval", action="store_true", help="只跑检索指标与消融")
+    parser.add_argument("--eval-set", default=None, help="评测集 jsonl 路径（默认 data/eval_set.jsonl）")
+    parser.add_argument("--split", choices=["all", "main", "holdout"], default="all",
+                        help="split=all 全量；main=非 holdout；holdout=仅 split:holdout 条目（不参与调参）")
+    parser.add_argument("--limit", type=int, default=None, help="只跑前 N 条（冒烟控花费用）")
     parser.add_argument("--out", default="docs/eval_report.md")
     args = parser.parse_args(argv)
 
-    cases = load_eval_set()
+    eval_path = Path(args.eval_set) if args.eval_set else None
+    cases = load_eval_set(eval_path)
+    if args.split != "all":
+        want = args.split == "holdout"
+        cases = [c for c in cases if bool(c.get("split") == "holdout") == want]
+    if args.limit:
+        cases = cases[: args.limit]
     llm = get_llm()
     store = IndexStore()
     # 始终增量同步：语料/词典更新后 hash 变化的文档自动重嵌，保证评测对象最新
@@ -292,6 +305,14 @@ async def main(argv: list[str] | None = None) -> int:
     out.write_text(report, encoding="utf-8")
     print(report)
     print(f"\n[report saved] {out}")
+    from ..llm.stats import stats as llm_stats
+
+    s = llm_stats.snapshot()
+    print(
+        f"[usage] llm_requests={s['llm_requests']} retries={s['llm_retries']} failures={s['llm_failures']} "
+        f"prompt_tokens={s['prompt_tokens']} completion_tokens={s['completion_tokens']} "
+        f"refusals={s['refusals']} tool_calls={s['tool_calls']}"
+    )
     return 0
 
 

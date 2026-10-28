@@ -208,15 +208,23 @@ def make_nodes(retriever, llm):
         from .tools import execute_tool, select_tool
 
         t0 = time.perf_counter()
-        call = await select_tool(llm, state["question"])
+        route_city = (state.get("route") or {}).get("city") or ""
+        question = state.get("question") or ""
+        # 防张冠李戴守卫（故障注入实测发现）：问题不含任何支持城市且路由为全国时，
+        # 模型/MOCK 对 city 的任何"推断"都是猜测——用 A 城规则回答 B 城问题即编造，
+        # 直接不调用工具，交给检索/拒答链路诚实处理
+        if (not route_city or route_city == "全国") and not any(
+            c in question for c in settings.cities if c != "全国"
+        ):
+            return {"tool_result": None, "events": [_ev("tool", tool="none", reason="no_supported_city")]}
+        call = await select_tool(llm, question)
         if call.tool == "none":
             return {"tool_result": None, "events": [_ev("tool", tool="none")]}
         # 确定性上下文补全：模型常省略 city（默认它会被带入）——
-        # 用意图路由的城市结果回填，缺失参数靠硬编码兜底而非指望模型自觉
-        if "city" not in call.args or not call.args.get("city"):
-            route_city = (state.get("route") or {}).get("city") or ""
-            if route_city and route_city != "全国":
-                call.args["city"] = route_city
+        # 用意图路由的城市结果回填，缺失参数靠硬编码兜底而非指望模型自觉；
+        # 模型选的城市与路由不一致时以路由为准（同样防张冠李戴）
+        if route_city and route_city != "全国":
+            call.args["city"] = route_city
         result = execute_tool(call)
         return {
             "tool_result": {"tool": call.tool, "args": call.args, "result": result},
@@ -255,7 +263,9 @@ def make_nodes(retriever, llm):
             )
         system = (
             "你是「政策罗盘」社保公积金政策问答助手。严格遵守：\n"
-            "1. 仅依据提供的参考资料回答，资料中没有的数字/结论不得编造；\n"
+            "1. 仅依据提供的参考资料回答，资料中没有的数字/结论不得编造；"
+            "用户问的是特定城市而资料是其他城市时，须明确说明该城市暂未收录，"
+            "不得把其他城市的规定当作该城市的答案；\n"
             "2. 引用来源时使用 [n] 标注对应资料编号；\n"
             "3. 优先引用现行有效文件；若仅找到已废止文件，须明确提示政策已更新；\n"
             "4. 涉及计算的必须采用【计算工具结果】中的数字；\n"

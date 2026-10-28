@@ -86,6 +86,7 @@ class LLMClient:
             base_url=settings.llm_api_base.rstrip("/"),
             headers={"Authorization": f"Bearer {settings.llm_api_key}"},
             timeout=settings.llm_timeout,
+            trust_env=settings.llm_trust_env,
         )
 
     # ---------- 底层请求 ----------
