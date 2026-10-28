@@ -16,7 +16,7 @@
 **没做 / 边界**：
 
 - **未上线、无真实用户**：没有生产部署、没有真实流量数据；压测是 mock 模式下的本机 HTTP 栈压测，不代表生产容量。
-- **杭州 2 份真实 PDF 之外的城市此前均为演示语料**：本次替换了北京/上海/广州/深圳/成都的租赁提取与北京贷款、全国条例；**杭州贷款、上海贷款、北京社保补缴等 13 份演示文档仍是教学虚构**（文件头部有【演示语料】声明），其中上海/杭州贷款限额表（LOAN_RULES）沿用演示口径，未找到官方原文核对——评测中涉及这两城的计算题（v1 #3/#12/#14 等）考的是"工具公式与语料一致"，不是"数字与官方一致"。
+- **杭州 2 份真实 PDF 之外的城市此前均为演示语料**：本次替换了北京/上海/广州/深圳/成都的租赁提取与北京贷款、全国条例；北京社保补缴等 **11 份演示文档仍是教学虚构**（文件头部有【演示语料】声明）——其中上海/杭州贷款已于 **2026-10-29（PC-2 追补）真实化**：沪公积金管委会〔2026〕1号（首套基本额度个人 100 万/家庭 200 万，缴补充公积金另 +20/+40 万；官网 shgjj.com 连接不可达，以两个独立权威转载源交叉核对，来源 URL 见语料头部）与杭房公委〔2026〕1号（可贷额度=申请前 12 个月月均余额×20 倍，个人 ≤90 万/家庭 180 万，杭州市政府公报刊载全文）入库；LOAN_RULES 两城换真实数字，沪杭现行文件未载收入比条款，演示口径的 0.6/0.5 按"宁缺毋滥"删除。真实文件 10→**12 份**，演示文档 13→**11 份**。
 - AI 辅助：代码由 AI 会话产出、人审核验收；git 提交为真实时间线，未 push（由用户决定）。
 - API 花费：真模型评测仅用于 §4 的 real 口径数字（dashscope deepseek-v4-flash-0731），累计花费见 §4 脚注。
 
@@ -62,6 +62,12 @@
 - 真模型总花费：两轮合计 ≈0.94M 输入 + 0.19M 输出 token，按 flash 档典型价（输入 ¥0.5~2/M、输出 ¥2~8/M）估算 **≈¥1~2.5**（中位 ≈¥1.7），以百炼账单为准（预算上限 ¥3，未超）。
 - holdout 说明：15 条在评测集构建时随机分层抽出，未参与 lexicon/提示词/加权任何调整。
 
+**PC-2 追补回归（2026-10-29）：沪杭贷款规则真实化后，mock 与 real 分列**
+
+- 金标跟随真实原文修正：#184 关键词 `余额倍数`→`月均余额`/`20倍`（真实原文表述，旧演示文档字样已不存在）；calc 9 条金标按工具复算更新（杭州 15倍/60/120万→20倍/90/180万；上海 ×10倍/50/100万→首套限额制 100/200万）——均注明文号，可从语料原文逐字验证。
+- **mock**：v2 **92.2%**（83/90，失败集合与语料替换前完全一致）、v1 **78.8%**（26/33，失败集合与 P1 基线完全一致）——零回归。
+- **real 子集**（dashscope deepseek-v4-flash-0731，2026-10-29，按"只重跑受影响条目"纪律）：v2 贷款子集 **10/10=100%**（含 holdout #144）、v1 贷款子集 **8/8=100%**；usage 合计 122,696 in + 38,341 out token，估算 ≈¥0.1~0.6（红线 ≤¥1，未超）。报告：`evidence/eval_loan_regress_v2.md` / `eval_loan_regress_v1.md`；子集定义 `data/eval_loan_regress_v2.jsonl`（10 条）/ `_v1.jsonl`（8 条）。
+
 ## ⑤ 复现命令（逐条可复制，均在 `policy-compass/` 目录内执行）
 
 ```bash
@@ -81,6 +87,11 @@ POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --out evidence/eval_v1_mock_r
 python scripts/eval.py --eval-set data/eval_set_v2.jsonl --out evidence/eval_v2_real.md
 python scripts/eval.py --out evidence/eval_v1_real.md          # v1 smoke real（覆盖 docs/eval_report.md）
 
+# 3b) PC-2 沪杭贷款真实化回归子集（2026-10-29，只重跑受金标更新影响条目控花费）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --eval-set data/eval_set_v2.jsonl --out evidence/eval_v2_mock.md
+python scripts/eval.py --eval-set data/eval_loan_regress_v2.jsonl --out evidence/eval_loan_regress_v2.md   # real 10 条（含 holdout #144）
+python scripts/eval.py --eval-set data/eval_loan_regress_v1.jsonl --out evidence/eval_loan_regress_v1.md   # real 8 条
+
 # 4) 故障注入（mock，零花费）
 python scripts/fault_inject.py --out evidence/fault_injection.md
 
@@ -97,7 +108,7 @@ python scripts/serve.py             # http://127.0.0.1:8000
 
 ## ⑥ 已知边界与下一步
 
-- 13 份演示文档仍在库（有明确【演示语料】标记）；下一步：按本次流程逐份替换（上海/杭州贷款规则、社保类文档优先）。
+- 11 份演示文档仍在库（有明确【演示语料】标记；上海/杭州贷款两份已于 2026-10-29 真实化）；下一步：按同流程逐份替换剩余演示文档（社保类文档优先）。
 - 真实模型评分抖动：v1 real 历史口径 93.9% 中 2 例时效题误拒为评分抖动（见 docs/eval_report.md 历史）；本次 real 复跑数字以 §4 为准，如需更稳可加自校验投票。
 - 压测为单副本 uvicorn；生产多 worker/多副本容量需重测。零延迟 mock 的 QPS 饱和点（~45）是 Python 单进程 CPU 上限，不代表真实 LLM 场景（真实场景瓶颈在 LLM 侧，见 load_test.md 两轮对照）。
 - 未 push、未部署：git 历史在本机，push/公开部署/试用由用户决定（见 §1 边界）。
