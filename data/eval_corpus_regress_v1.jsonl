@@ -1,0 +1,4 @@
+{"id": 8, "type": "compare", "question": "公积金贷款和商业贷款利率差多少", "expect_docs": ["national_loan_vs_commercial.md"], "expect_keywords": ["2.6"], "expect_route": {"city": "全国", "domain": "公积金"}, "note": "公积金利率金标随真实原文更新：央行2025-05-08下调后首套5年以上2.6%（原演示口径2.85%）"}
+{"id": 24, "type": "slang", "question": "五险一金具体都包括什么", "expect_docs": ["national_five_insurances.md"], "expect_keywords": ["养老", "医疗"], "expect_route": {"city": "全国", "domain": "通用"}}
+{"id": 25, "type": "slang", "question": "社保基数是怎么定的", "expect_docs": ["national_contribution_base.md"], "expect_keywords": ["60%", "300%", "平均工资"], "expect_route": {"city": "全国", "domain": "社保"}}
+{"id": 29, "type": "timeliness", "question": "上海居转户对社保基数有什么要求", "expect_docs": ["shanghai_settlement.md"], "expect_keywords": ["2倍", "1倍"], "expect_route": {"city": "上海", "domain": "社保"}}
