@@ -346,6 +346,7 @@ class MockLLMClient(LLMClient):
             content_lines = [
                 l for l in lines
                 if not l.startswith("《") and "现行有效" not in l and "已废止" not in l
+                and not l.startswith("【")  # 语料元数据行（来源URL/抓取时间等）不得进答案
                 and not re.match(r"^[-—－]\s*\d+\s*[-—－]$", l.strip())  # OCR 页脚
             ]
             sentences = [
