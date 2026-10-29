@@ -1,0 +1,2 @@
+{"id": 129, "type": "compare", "question": "北京和上海公积金贷款额度计算方法有什么区别", "expect_docs": ["beijing_loan_quota.md", "shanghai_loan_quota.md"], "expect_keywords": ["10万"], "expect_route": {"city": "全国", "domain": "公积金"}}
+{"id": 184, "type": "multi", "question": "从北京把公积金转到杭州后，在杭州按什么方法计算贷款额度", "expect_docs": ["hangzhou_loan_quota.md", "national_transfer_process.md"], "expect_keywords": ["月均余额", "20倍"], "expect_route": {"city": "全国", "domain": "公积金"}}
