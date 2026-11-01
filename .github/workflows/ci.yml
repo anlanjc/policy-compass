@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 与 agenteval 门禁基线完全一致的 mock 环境（BM25-only，零 key、零外部依赖）；
+    # 本地复现：同环境变量下跑 pytest / eval，数字应与 CI 一致
+    env:
+      POLICY_COMPASS_FORCE_MOCK: "1"
+      EMBED_ENABLED: "false"
+      RERANK_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ingest corpus (BM25-only index, no API key)
+        run: python scripts/ingest.py
+
+      - name: Unit & e2e tests (mock LLM, no API key)
+        run: python -m pytest tests/ -q
+
+      - name: Evaluation smoke (v1, 33 items, mock provider)
+        run: python scripts/eval.py
+
+  # ── agenteval 回归门禁（评测平台跨项目集成）──────────────────────────────
+  # 跑 agenteval 的 30 条 policy-compass smoke 评测（真 HTTP 打到本项目 mock 模式服务）
+  # → gate 对比 agenteval 仓库内的基线 → 任一正确性指标劣化即 exit 1 挡合并。
+  # mock 全链路零 key；前提：评测平台仓库已推送到同 owner 的 GitHub（agenteval，main 分支）。
+  eval-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      POLICY_COMPASS_FORCE_MOCK: "1"
+      EMBED_ENABLED: "false"
+      RERANK_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/agenteval
+          ref: main
+          path: agenteval
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install policy-compass + agenteval dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e ./agenteval
+
+      - name: Ingest corpus (BM25-only index, no API key)
+        run: python scripts/ingest.py
+
+      - name: Start policy-compass server (mock LLM, no API key)
+        run: |
+          python scripts/serve.py &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/api/health >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8000/api/health >/dev/null
+
+      - name: agenteval regression gate (policy-compass smoke 30, mock judge)
+        env:
+          GATE_OUT_DIR: ${{ github.workspace }}/.agenteval_gate
+        run: |
+          bash agenteval/scripts/ci_gate.sh policy_compass http://127.0.0.1:8000 \
+            agenteval/baselines/policy_compass_smoke_baseline.json
+
+      - name: Upload gate reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-gate-policy-compass
+          path: .agenteval_gate/
+          if-no-files-found: ignore
