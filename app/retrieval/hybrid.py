@@ -21,7 +21,7 @@ from pathlib import Path
 from ..config import settings
 from ..ingestion.indexer import IndexStore, IndexedChunk
 from ..llm.stats import stats
-from .bm25 import BM25Index, tokenize
+from .bm25 import BM25Index, tokenize, tokenize_words
 from .rerank import Reranker
 
 logger = logging.getLogger(__name__)
@@ -78,15 +78,23 @@ class HybridRetriever:
     # ---------- 查询扩展 ----------
 
     def expand_query(self, query: str) -> tuple[dict[str, float], list[str]]:
-        """词典扩展：黑话命中后以 0.6 权重注入规范词，原始词保持 1.0。"""
+        """词典扩展：黑话命中后以 0.6 权重注入规范词，原始词保持 1.0。
+
+        PC-3 机制修复：注入词必须先经 tokenize_words 归一到索引分词空间。
+        此前整串短语直接注入（如"委托提取还贷"/"住房公积金账户余额"），
+        在 search_weighted 的 df 查找中静默失效——实测扩展词 df 命中率≈0
+        （仅"贷款额度"等恰好是 jieba 原生 token 的词生效），扩展 feature
+        自上线起近乎空转，slang 评测项的历史通过属排序巧合。
+        """
         weighted = {t: 1.0 for t in set(tokenize(query))}
         expanded: list[str] = []
         for slang, formal in self._lex.items():
             if slang in query:
                 for word in formal:
-                    if word not in weighted:
-                        weighted[word] = 0.6
-                        expanded.append(word)
+                    for tok in tokenize_words(word):
+                        if tok not in weighted:
+                            weighted[tok] = 0.6
+                            expanded.append(tok)
         return weighted, expanded
 
     # ---------- 主入口 ----------
@@ -190,6 +198,15 @@ class HybridRetriever:
         # 政策标题=事项名，是比正文更强的主题信号（"租赁提取管理实施细则"）
         from .bm25 import cjk_bigrams
 
+        # 多城问法（"北京和广州…分别是多少"）：路由只能给单城/全国，
+        # query 文本里出现的城市名直接对照 chunk.city 加权——与
+        # city_match_boost 同一信号源；单城路由时已有上两行覆盖，不重复施加
+        mentioned_cities = (
+            {c for c in settings.cities if c != "全国" and c in query}
+            if not (city and city != "全国")
+            else set()
+        )
+
         q_terms = cjk_bigrams(query)
         for sc in fused.values():
             score = sc.fused_score
@@ -197,6 +214,8 @@ class HybridRetriever:
                 score *= settings.city_match_boost
             elif city and city != "全国" and sc.chunk.city != "全国":
                 score *= 0.5  # 明确指向某城市时，其他城市文件强降权
+            elif mentioned_cities and sc.chunk.city in mentioned_cities:
+                score *= settings.city_match_boost
             if domain and domain != "通用" and sc.chunk.domain == domain:
                 score *= settings.domain_match_boost
             title_terms = cjk_bigrams(sc.chunk.title)

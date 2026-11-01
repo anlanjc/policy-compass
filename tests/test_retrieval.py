@@ -110,6 +110,7 @@ async def test_hybrid_city_boost_and_real_corpus(components):
     assert top_real.chunk.doc_no == "杭房公委〔2023〕8号"
     assert top_real.chunk.is_valid
 
-    # 黑话扩展生效
+    # 黑话扩展生效（PC-3 机制修复后 expanded_terms 为索引分词空间的 token——
+    # 整串短语此前在 search_weighted 的 df 查找中静默失效，token 化才是真扩展）
     r3 = await retriever.search("跳槽了公积金怎么带走", use_rerank=False)
-    assert "转移接续" in r3.expanded_terms
+    assert "转移" in r3.expanded_terms and "接续" in r3.expanded_terms
