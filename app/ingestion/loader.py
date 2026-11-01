@@ -21,7 +21,14 @@ async def load_file(path: Path, llm=None) -> str:
         from pypdf import PdfReader
 
         reader = PdfReader(str(path))
-        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        # 页边界插入【pN】标记行：splitter 剥离标记并记账 chunk 级页码（引用原文定位）；
+        # 标记不进 chunk 正文，BM25/嵌入信号与无标记版逐字节一致
+        marked = []
+        for i, page in enumerate(reader.pages, start=1):
+            t = (page.extract_text() or "").strip()
+            if t:
+                marked.append(f"【p{i}】\n{t}")
+        text = "\n".join(marked)
         if is_scanned_pdf(text, len(reader.pages)):
             if llm is None:
                 raise ValueError(

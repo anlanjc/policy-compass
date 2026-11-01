@@ -22,6 +22,8 @@ class Source(BaseModel):
     doc_no: str = ""
     city: str = ""
     effective_date: str = ""
+    sections: list[str] = []
+    pages: list[int] = []
     is_valid: bool = True
     chunk_id: str = ""
 

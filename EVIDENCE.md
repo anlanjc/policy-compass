@@ -89,7 +89,7 @@ pip install -r requirements.txt -i https://pypi.org/simple/
 python scripts/ingest.py
 
 # 2) 测试回归（mock 模式，零 API key）
-python -m pytest tests/ -q          # 23 passed
+python -m pytest tests/ -q          # 29 passed（PC-3 起，含引用定位 6 项）
 
 # 3) 评测
 POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --eval-set data/eval_set_v2.jsonl --out evidence/eval_v2_mock.md
@@ -127,3 +127,16 @@ python scripts/serve.py             # http://127.0.0.1:8000
 - 真实模型评分抖动：v1 real 历史口径 93.9% 中 2 例时效题误拒为评分抖动（见 docs/eval_report.md 历史）；本次 real 复跑数字以 §4 为准，如需更稳可加自校验投票。
 - 压测为单副本 uvicorn；生产多 worker/多副本容量需重测。零延迟 mock 的 QPS 饱和点（~45）是 Python 单进程 CPU 上限，不代表真实 LLM 场景（真实场景瓶颈在 LLM 侧，见 load_test.md 两轮对照）。
 - 未 push、未部署：git 历史在本机，push/公开部署/试用由用户决定（见 §1 边界）。
+
+### PC-3（2026-11-01）引用原文定位 + mock 基线复测发现
+
+**特性**：chunk 级条款/页码元数据落全链——splitter 记录条款/章节标签（第X条不限长：真实公文"第七条（常见问题）问：……"长条文行实测限长会整批漏标；章节/数字序号保留 30 字防线）+ PDF/OCR 页边界插【pN】标记行、切分时剥离并记账（标记不进正文）；chunks 表加 sections/pages 列 + 旧库打开自动 ALTER 迁移；引用卡升级为"文号 · 生效日期 · 条款 · 现行/废止"。实测 60/68 块带条款标签（如杭州转移指引 chunk=第七条、条例 chunk=第八~十一条）；页码需扫描件 OCR 重跑后产生（现有 OCR 缓存文本无标记，诚实留空）。
+
+**零漂移红线守住**：特性只加元数据、不改任何切分边界——新库与旧库 chunk 正文 dump **逐字节一致**（68 块不变）；pytest **23→29 全绿**（新增 6 测试：条款覆盖/页标记剥离与记账/有标记与无标记语料正文逐字节一致锚定/段落模式标签继承/IndexStore 回程/旧 schema 迁移）。
+
+**复测发现（mock 数字口径，重要）**：A/B 验证中发现最终 HEAD 的 mock 数字与记录口径不符——
+- v1 mock：记录 84.9%（28/33）→ 11-01 复跑 **81.8%（27/33）**，4+ 次稳定复现（含 HEAD 代码同库 A/B、PYTHONHASHSEED=0/0/1），失败集差=**#3（fact）**；
+- v2 mock：记录 94.4%（85/90）→ 11-01 复跑 **90.0%（81/90）**，新增失败 **#127/#177/#179/#189**（compare/slang/multi）；
+- 根因（时间线实证）：评测报告生成于 10-29 07:58，沪杭贷款语料真实化+金标修正的提交落在 **08:02 批次**，08:02 最终 HEAD **未复跑 v1/v2 mock 全量**（real 侧有受影响子集 22 条覆盖，mock 侧遗漏）；#3 答案引"账户余额倍数"旧表述，属金标/语料对齐 2026 文件的连带（与 #6 排序噪声同类）；
+- 与本特性无关的证明：chunk 逐字节一致 + HEAD 代码同库 A/B 同为 81.8%；
+- 处理选项（留主人定）：①按新口径回填 README/EVIDENCE/RESUME 的 mock 数字（v2 90.0%/v1 81.8%，real 冻结口径不动）；②逐条核对 #3/#127/#177/#179/#189 的金标与 杭房公委〔2026〕1号 等 2026 文件后修复重测。

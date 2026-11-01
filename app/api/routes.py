@@ -126,7 +126,8 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
         state["sources"] = [
             {
                 "no": i, "title": d["title"], "doc_no": d["doc_no"], "city": d["city"],
-                "effective_date": d["effective_date"], "is_valid": d["is_valid"],
+                "effective_date": d["effective_date"], "sections": d.get("sections", []),
+                "pages": d.get("pages", []), "is_valid": d["is_valid"],
                 "chunk_id": d["chunk_id"],
             }
             for i, d in enumerate(docs, start=1)

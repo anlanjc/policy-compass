@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -48,6 +49,8 @@ class IndexedChunk:
     doc_no: str
     effective_date: str
     embedding: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    sections: list[str] = field(default_factory=list)  # 条款/章节标签（引用原文定位）
+    pages: list[int] = field(default_factory=list)  # 页码（PDF/OCR 语料；网页转载为空）
 
     @property
     def is_valid(self) -> bool:
@@ -103,6 +106,19 @@ class IndexStore:
                 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
                 """
             )
+            self._migrate_columns()
+
+    def _migrate_columns(self) -> None:
+        """旧库升级：chunks 表补 sections/pages 列（引用原文定位，PC-3）。
+
+        CREATE TABLE IF NOT EXISTS 对已存在的旧 schema 不生效，须显式 ALTER；
+        旧库已有 chunk 行的 sections/pages 保持 NULL（重摄取后自动回填）。
+        """
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(chunks)")}
+        if "sections" not in cols:
+            self._conn.execute("ALTER TABLE chunks ADD COLUMN sections TEXT")
+        if "pages" not in cols:
+            self._conn.execute("ALTER TABLE chunks ADD COLUMN pages TEXT")
 
     # ---------- 增量同步 ----------
 
@@ -162,9 +178,20 @@ class IndexStore:
             rows = []
             for chunk, vec in zip(pieces, vectors):
                 blob = np.asarray(vec, dtype=np.float32).tobytes()
-                rows.append((f"{meta.doc_id}:{chunk.seq}", meta.doc_id, chunk.seq,
-                             chunk.text, blob))
-            self._conn.executemany("INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?)", rows)
+                rows.append(
+                    (
+                        f"{meta.doc_id}:{chunk.seq}", meta.doc_id, chunk.seq,
+                        chunk.text, blob,
+                        json.dumps(chunk.sections, ensure_ascii=False),
+                        json.dumps(chunk.pages),
+                    )
+                )
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO chunks"
+                " (chunk_id, doc_id, seq, text, embedding, sections, pages)"
+                " VALUES (?,?,?,?,?,?,?)",
+                rows,
+            )
 
     async def add_document(self, file_name: str, content: str, embed_fn: EmbedFn) -> int:
         """API 上传入口：同步摄取单个文档，返回 chunk 数。"""
@@ -198,7 +225,8 @@ class IndexStore:
         rows = self._conn.execute(
             """
             SELECT c.chunk_id, c.doc_id, c.seq, c.text, c.embedding,
-                   d.title, d.city, d.domain, d.status, d.doc_no, d.effective_date
+                   d.title, d.city, d.domain, d.status, d.doc_no, d.effective_date,
+                   c.sections, c.pages
             FROM chunks c JOIN docs d ON c.doc_id = d.doc_id
             ORDER BY c.doc_id, c.seq
             """
@@ -212,6 +240,8 @@ class IndexStore:
                     chunk_id=r[0], doc_id=r[1], seq=r[2], text=r[3],
                     title=r[5], city=r[6], domain=r[7], status=r[8],
                     doc_no=r[9], effective_date=r[10], embedding=vec,
+                    sections=json.loads(r[11]) if r[11] else [],
+                    pages=json.loads(r[12]) if r[12] else [],
                 )
             )
             vecs.append(vec)

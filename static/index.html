@@ -206,7 +206,7 @@ async function send(e) {
         const box = document.createElement('div');
         box.className = 'sources';
         box.innerHTML = done.sources.map(s =>
-          `<div class="src ${s.is_valid ? '' : 'invalid'}">[${s.no}] 《${s.title}》 ${s.doc_no} · 生效 ${s.effective_date} · ${s.is_valid ? '<span class="ok">现行有效</span>' : '已废止'}</div>`
+          `<div class="src ${s.is_valid ? '' : 'invalid'}">[${s.no}] 《${s.title}》 ${s.doc_no} · 生效 ${s.effective_date}${s.sections && s.sections.length ? ' · ' + s.sections.join('、') : ''}${s.pages && s.pages.length ? ' · 第' + s.pages.join('、') + '页' : ''} · ${s.is_valid ? '<span class="ok">现行有效</span>' : '已废止'}</div>`
         ).join('');
         ai.querySelector('.bubble').appendChild(box);
       }

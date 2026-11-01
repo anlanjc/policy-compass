@@ -72,7 +72,7 @@ async def ocr_pdf(llm: LLMClient, pdf_path: str | Path, max_pages: int = 10) -> 
         )
 
     pages = render_pages(pdf_path)
-    texts: list[str] = []
+    page_texts: list[str] = []
     for i, png in enumerate(pages[:max_pages]):
         b64 = base64.b64encode(png).decode()
         payload = {
@@ -91,10 +91,14 @@ async def ocr_pdf(llm: LLMClient, pdf_path: str | Path, max_pages: int = 10) -> 
         }
         try:
             data = await llm._post_with_retry("/chat/completions", payload)
-            texts.append(data["choices"][0]["message"]["content"] or "")
+            content = (data["choices"][0]["message"]["content"] or "").strip()
+            if content:
+                # 页边界插入【pN】标记行（与 loader.py PDF 文本路同约定），
+                # splitter 剥离标记并记账 chunk 级页码
+                page_texts.append(f"【p{i + 1}】\n{content}")
         except (LLMError, KeyError, IndexError) as e:
             logger.warning("OCR 第 %d 页失败: %s", i + 1, e)
-    text = "\n".join(t.strip() for t in texts if t.strip())
+    text = "\n".join(page_texts)
     if text:
         cache_file.write_text(text, encoding="utf-8")
     return text

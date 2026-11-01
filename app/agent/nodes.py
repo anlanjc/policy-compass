@@ -91,6 +91,8 @@ def make_nodes(retriever, llm):
                     "domain": c.domain,
                     "status": c.status,
                     "effective_date": c.effective_date,
+                    "sections": c.sections,
+                    "pages": c.pages,
                     "is_valid": c.is_valid,
                     "text": c.text,
                     "retrieval_score": round(sc.final_score, 5),
@@ -296,6 +298,8 @@ def make_nodes(retriever, llm):
                 "doc_no": d["doc_no"],
                 "city": d["city"],
                 "effective_date": d["effective_date"],
+                "sections": d.get("sections", []),
+                "pages": d.get("pages", []),
                 "is_valid": d["is_valid"],
                 "chunk_id": d["chunk_id"],
             }
