@@ -4,6 +4,18 @@
 >
 > 站在 [Datawhale《All in RAG》](https://github.com/datawhalechina/all-in-rag) 教程"四步构建 RAG"之上的业务化演进：教程教 RAG 基础，本项目补上教程尚未覆盖的 **Agentic RAG** 专题，并以政策问答这一强约束场景做深。
 
+## 界面速览
+
+| Function Calling 计算 + 工具调用 Trace | CRAG 自纠错循环 → 诚实拒答 |
+|---|---|
+| ![FC 计算](docs/screenshots/02_calc_fc.png) | ![CRAG 拒答](docs/screenshots/04_refuse.png) |
+
+| 跨城转移接续 · 文号引用 | 首页 · Agent 决策路径实时面板 |
+|---|---|
+| ![转移接续](docs/screenshots/03_transfer.png) | ![首页](docs/screenshots/01_home.png) |
+
+> 左侧「Agent 决策路径」面板由 SSE 全链路实时推送逐节点留痕（路由→检索→评分→黑话改写→工具调用→生成→忠实度校验）；每条引用自带文号 + 生效日期 + 现行/废止标注，可溯源到政策原文。部署手册见 [DEPLOY.md](DEPLOY.md)。
+
 ## 为什么是"政策问答"而不是又一个知识库 Demo
 
 通用 RAG demo 的通病是**技术悬空**——没有任何业务约束强迫你做对什么。政策问答的每个技术设计都被业务事实逼出来：
