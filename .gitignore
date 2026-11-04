@@ -6,3 +6,4 @@ data/index.db
 data/index.db-*
 data/traces/
 .venv/
+.agenteval/
