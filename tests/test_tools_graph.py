@@ -99,3 +99,40 @@ async def test_agent_rule_router_fallback(components):
     assert rule_based_route("北京和上海租房提取额度").city == "全国"
     assert rule_based_route("杭州公积金怎么提取").city == "杭州"
     assert rule_based_route("公积金贷款利率").city == "全国"
+
+
+# ---------- S3 评审 PC-4 回归：字符串注解下的类型防御曾为死代码 ----------
+
+def test_is_family_string_false_uses_single_quota():
+    """is_family 传 'false'（真实模型实测偏差）不得触发家庭口径（上海 100 万 vs 200 万）。
+
+    S3 评审 PC-4：走 execute_tool 真实路径（LLM→ToolCall→_coerce_args→impl），
+    此前字符串注解使 bool/int 转换为死代码，'false' 被当真值静默翻倍额度。
+    """
+    from app.agent.tools import ToolCall
+
+    r = execute_tool(ToolCall(tool="housing_loan_quota",
+                              args={"city": "上海", "balance": 40000, "is_family": "false"}))
+    assert r["ok"] and r["quota_wan"] == 100.0
+    assert "个人上限" in r["detail"]["cap"]
+    r2 = execute_tool(ToolCall(tool="housing_loan_quota",
+                               args={"city": "上海", "balance": 40000, "is_family": "true"}))
+    assert r2["ok"] and r2["quota_wan"] == 200.0
+
+
+def test_years_string_converts_not_typeerror():
+    """years 传 '8'（字符串）应正常出额度，而非 max('8',1) TypeError → 参数不匹配。"""
+    from app.agent.tools import ToolCall
+
+    r = execute_tool(ToolCall(tool="housing_loan_quota",
+                              args={"city": "北京", "balance": 40000, "years": "8"}))
+    assert r["ok"] and r["quota_wan"] == 80.0
+
+
+def test_balance_string_with_wan_unit():
+    """balance 传 '4万'（含单位字符串）沿 float 分支正常换算。"""
+    from app.agent.tools import ToolCall
+
+    r = execute_tool(ToolCall(tool="housing_loan_quota",
+                              args={"city": "杭州", "balance": "4万"}))
+    assert r["ok"] and r["quota_wan"] == 80.0  # 4万×20倍=80万（杭房公委〔2026〕1号）

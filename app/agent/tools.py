@@ -197,6 +197,27 @@ class ToolCall(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict, description="工具参数")
 
 
+def _annotation_base(ann: Any) -> type | None:
+    """解出注解的基底真实类型：兼容 `from __future__ import annotations` 下的
+    `'float | None'` 字符串注解与 `X | None` Union 形态（S3 评审 PC-4）。
+
+    此前 `ann is int`/`ann is bool` 对字符串注解恒为 False，years/is_family 的
+    防御转换是死代码——is_family 传 'false' 被当真值，家庭口径静默翻倍额度。
+    """
+    import inspect
+    import typing
+    import types as _types
+
+    if ann is None or ann is inspect.Parameter.empty:
+        return None
+    origin = typing.get_origin(ann)
+    if origin is typing.Union or origin is _types.UnionType:
+        non_none = [a for a in typing.get_args(ann) if a is not type(None)]
+        if len(non_none) == 1:
+            ann = non_none[0]
+    return ann if isinstance(ann, type) else None
+
+
 def _coerce_args(impl, args: dict[str, Any]) -> dict[str, Any]:
     """按工具签名防御性转换模型传参。
 
@@ -205,17 +226,23 @@ def _coerce_args(impl, args: dict[str, Any]) -> dict[str, Any]:
     别名归一 → 按类型注解转换 → 丢弃未知键；转换失败保留原值让工具自身校验兜底。
     """
     import inspect
+    import typing
 
     args = {ARG_ALIASES.get(k, k): v for k, v in args.items()}
     sig = inspect.signature(impl)
+    # 运行时注解因 __future__ annotations 全为字符串，必须经 get_type_hints 解析
+    try:
+        hints = typing.get_type_hints(impl)
+    except Exception:
+        hints = {}
     coerced: dict[str, Any] = {}
     for k, v in args.items():
         param = sig.parameters.get(k)
         if param is None:
             continue  # 模型幻觉出的参数直接丢弃
-        ann = param.annotation
+        ann = _annotation_base(hints.get(k, param.annotation))
         try:
-            if ann in (float, "float | None") and not isinstance(v, (int, float)):
+            if ann is float and not isinstance(v, (int, float)):
                 v = float(str(v).replace("万", "e4").replace("，", "").strip() or 0)
             elif ann is int and not isinstance(v, int):
                 v = int(float(v))
