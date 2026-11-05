@@ -22,7 +22,7 @@
 
 ## ② 三个关键决策
 
-1. **检索为什么 BM25-only（EMBED_ENABLED=false）**：账号 embedding 额度不可用；消融实测（v2 90 题、本会话复跑）BM25 纯净 recall@5 95.3% vs BM25+业务加权 95.9%，向量路休眠时业务加权是唯一增益来源且无召回损失。架构保留向量路（`vector_weight`、embed 配置齐全），有额度时改一个开关即可恢复双路。
+1. **检索为什么 BM25-only（EMBED_ENABLED=false）**：账号 embedding 额度不可用；BM25 加权 vs 纯净的消融见 §4（2026-11-05 复跑：97.9/97.2，加权保留价值=废止零泄漏+跨城召回结构，非 recall 增益）。**向量腿价值已于 2026-11-05 以真实 embedding 消融实测**（text-embedding-v4，S1）：MRR/端到端正增益、recall@5 弱增益（v2 +0.9pp）、泄漏仍 0——结论=保留架构与开关、生产默认开启留决策（详见 docs/ablation.md；生产开启前置=真模型复测+CI 门禁基线重建）。
 2. **为什么拒答降级而不是强行回答**：政策数字答错即事故。故障注入实证：LLM 完全不可用时系统诚实拒答（10/10）、grade 评分链路被打断时保守记 0.3 分宁可少答（10/10 拒答）、库外城市宁可"未收录"不张冠李戴（修复后编造=0）。拒答不是失败，是设计。
 3. **为什么评测分层（smoke v1 / full v2 / holdout 单列）**：v1 33 条是回归集——改代码后 5 分钟确认"老题不回归"（本次实测 75.8%→78.8%）；v2 90 条按题型分层才能暴露结构性弱点（如 mock 下 refuse 词面噪声）；holdout 15 条永不参与调参，防止"在测试集上调参"的自欺。
 
@@ -34,14 +34,14 @@
 
 ## ④ 评测表（mock 与 real 严格分开）
 
-**检索消融（v2 78 题含目标文档集，mock 口径，确定性计算不依赖 LLM；下表为 PC-2 语料变更后 2026-10-29 复跑）**
+**检索消融（v2 78 题含目标文档集，mock 口径，确定性计算不依赖 LLM；下表为 PC-3 检索修复后 2026-11-05 复跑，与冻结口径 97.9/97.2 一致）**
 
 | 配置 | recall@5 | MRR | 已废止文件泄漏进 Top5 |
 |---|---|---|---|
-| BM25 纯净 | **95.9%** | 0.934 | 0 |
-| **BM25 + 业务加权（本系统）** | 95.3% | 0.919 | **0** |
+| BM25 纯净 | **97.9%** | 0.949 | 0 |
+| **BM25 + 业务加权（本系统）** | 97.2% | 0.949 | **0** |
 
-> 诚实记录：PC 会话语料下曾为纯净 95.3/加权 95.9（加权 +0.6pp）；PC-2 真实语料替换 6 份后复跑翻转（±1~2 题、n=78 小样本噪声级）。**加权不再有 recall@5 增益，其保留价值是废止文件零泄漏（历史语料 2→0，本表两配置均 0，单测覆盖）与跨城同名政策的召回结构**；是否保留加权以端到端与更多语料验证为准，不在 mock 噪声量级上调参（holdout 纪律同理）。
+> 诚实记录：PC 会话语料下曾为纯净 95.3/加权 95.9，PC-2 真实语料替换后复跑翻转，PC-3 黑话扩展 token 化修复后两行同升至 97.9/97.2（±1~2 题、n=78 小样本噪声级）。**加权不再有 recall@5 增益，其保留价值是废止文件零泄漏（历史语料 2→0，本表两配置均 0，单测覆盖）与跨城同名政策的召回结构**；是否保留加权以端到端与更多语料验证为准，不在 mock 噪声量级上调参（holdout 纪律同理）。向量腿（真 embedding）消融见下文 S1 节。
 
 **端到端（v2 90 题，mock 口径，PC-2 后）**：总体 **94.4%**（85/90），P50 19.5ms——fact 96.0%（24/25）/ compare 86.7%（13/15）/ calc 100%（15/15）/ refuse 91.7%（11/12）/ 时效 100%（8/8）/ 黑话 87.5%（7/8）/ 多跳 100%（7/7）。失败 5 条（#105/129/131/167/183）逐条归因见 `evidence/fail_analysis.md`（mock 词面噪声/引用排序局限，检索召回均正确；较 PC 会话基线修复 #156/157 两条、零新增）。
 
@@ -96,6 +96,15 @@
 - **剩余 v2 mock 失败中 3 条（#177/#179/#189）为 mock 抽取式脆性**，连同 #3/#127 的受影响 5 项**真模型探针 5/5 通过**（#3 关键词 200万✓ 来源沪公积金管委会〔2026〕1号；#127 2000✓ 穗+京双源；#177 转移接续✓；#179 委托提取✓；#189 加装电梯✓）。三条脆性诊断：#177 条例块真含"账户转移"字样被评分误判相关；#179 杭州转移文件标题含"办理…业务"触发 title_match_boost 抢占 top1；#189 右块 rank2 与 rank1 分差 0.001（mock 只抽 top1）。
 - **real 全量复测（同模型 deepseek-v4-flash-0731，2026-11-02）**：v1 **100.0%**（33/33，历史 2 例评分抖动误拒消解）/ v2 **93.3%**（84/90，与冻结口径持平；refuse 12/12 零编造、calc 14/15）。usage：v2 568,198 in + 158,400 out；v1 221,450 in + 74,776 out；另有受影响 5 项探针调用——**PC-3 真模型总花费 ≈¥1~4**（账单以百炼为准）。
 
+**S1 向量腿消融（2026-11-05/06，真实 embedding 实测，chat 全程 mock）**
+
+- **三口径拆分（重要发现）**："BM25-only" 必须分清——A 生产口径（真客户端零向量→腿真空转，v2 recall@5 97.2%）/ B FORCE_MOCK 口径（**MockLLMClient.embed 不检查 embed_enabled，哈希词面向量腿实际在跑**，93.8%，比纯 BM25 低 3.4pp——CI 门禁与 e2e mock 均此口径，基线自洽）/ C 混合真向量（98.1%）。完整三口径表与门禁关系见 docs/ablation.md §3。
+- **主表（v2 n=78 / v1 n=29，text-embedding-v4 1024 维）**：hybrid_full recall@5 v2 **98.1%**（vs 生产 BM25 97.2%，+0.9pp）/ v1 95.4%（-1.1pp 小样本负贡献）；**MRR 双集大涨**（v2 0.949→0.984、v1 0.831→0.902）；**e2e mock v2 91.1→93.3%（+2.2pp，PC-3 脆性题 #177/#189 被向量重排救回）、v1 84.9→87.9%（+3.0pp）**；废止泄漏全配置 0；hybrid_no_boost 98.7%>hybrid_full 98.1%（向量开启时加权轻微抢占，与 PC-2 诚实翻转同向）。延迟代价 +~0.3s/检索（生产 P50 15s 口径 <2%）。
+- **结论**：向量腿**值得保**（MRR 与 e2e 增益一致为正），生产默认开启留主人决策——前置=真模型 e2e 复测+agenteval 门禁基线重建+冻结口径更新（清单见 docs/ablation.md §4）。
+- **意外发现（顺手报主人，不擅修）**：`splitter._pack` 构造 Chunk 从不赋值 title→`_ingest` embed 输入实为 `"\n"+正文`（标题经正文首行《标题》进入，功能无损）；修复会动全部 chunk 向量，留主人决策。
+- **复现性纪律**：实验用原地 UPDATE 换装库向量三次（哈希→真→哈希），`--phase restore_mock` 以 MockLLMClient.embed（md5 确定性）恢复冻结兼容口径，恢复后 v1 84.9%/v2 91.1% **逐字复现**；DashScope 批量上限 10（config 默认 32 为 OpenAI 口径，脚本内钳制）。
+- **花费**：chunk 重嵌 ×2 轮 63,467 字符 + 查询向量 ×2 轮 ≈1,360 次调用 ≈3.5 万字符，估算 **≤¥0.07**（审批上限 ¥0.1，未超；usage 字段客户端未捕获，按输入字符上界估，账单以百炼为准）。原始数据 `evidence/ablation_{bm25,embed,hybrid,restore_mock}.json`，脚本 `scripts/ablation_vector.py`（app/ 零改动）。
+
 ## ⑤ 复现命令（逐条可复制，均在 `policy-compass/` 目录内执行）
 
 ```bash
@@ -123,6 +132,12 @@ python scripts/eval.py --eval-set data/eval_loan_regress_v1.jsonl --out evidence
 # 3c) PC-2 演示文档替换回归（语料变更涉及的 v1 条目真模型抽查）
 python scripts/eval.py --eval-set data/eval_corpus_regress_v1.jsonl --out evidence/eval_corpus_regress_v1.md  # real 4 条
 python scripts/eval.py --eval-set data/eval_loan_regress_v2b.jsonl --out evidence/eval_loan_regress_v2b.md   # real 2 条（v2 #129/#184）
+
+# 3d) S1 向量腿消融（2026-11-05；embed/hybrid 涉真实 API 须主人批准，见 docs/ablation.md）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/ablation_vector.py --phase bm25           # 零花费基线（CI 门禁同环境）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/ablation_vector.py --phase embed --approved   # 真实重嵌 68 chunk（≈¥0.01）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/ablation_vector.py --phase hybrid         # 混合腿五组消融+e2e（查询向量真 API）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/ablation_vector.py --phase restore_mock   # 恢复 FORCE_MOCK 哈希口径（冻结 mock 复现前提）
 
 # 4) 故障注入（mock，零花费）
 python scripts/fault_inject.py --out evidence/fault_injection.md

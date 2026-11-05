@@ -1,0 +1,225 @@
+{
+ "phase": "hybrid",
+ "env": {
+  "force_mock": true,
+  "embed_enabled": true,
+  "embed_model": "text-embedding-v4",
+  "vector_weight": 0.8
+ },
+ "sets": [
+  {
+   "eval_set": "v1",
+   "current": {
+    "variant": "hybrid_full",
+    "n": 29,
+    "recall@5": 0.954,
+    "mrr": 0.9023,
+    "stale_leaks": 0
+   },
+   "ablation": [
+    {
+     "variant": "bm25_production",
+     "n": 29,
+     "recall@5": 0.9655,
+     "mrr": 0.8305,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "bm25_only",
+     "n": 29,
+     "recall@5": 0.9828,
+     "mrr": 0.8333,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "vector_only",
+     "n": 29,
+     "recall@5": 0.9713,
+     "mrr": 0.9224,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "hybrid_no_boost",
+     "n": 29,
+     "recall@5": 0.9713,
+     "mrr": 0.908,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "hybrid_full",
+     "n": 29,
+     "recall@5": 0.954,
+     "mrr": 0.9023,
+     "stale_leaks": 0
+    }
+   ],
+   "e2e": {
+    "total": 33,
+    "overall_pass_rate": 0.8788,
+    "p50_latency_ms": 289.8,
+    "by_type": {
+     "fact": {
+      "n": 9,
+      "pass_rate": 0.7778
+     },
+     "compare": {
+      "n": 4,
+      "pass_rate": 1.0
+     },
+     "calc": {
+      "n": 6,
+      "pass_rate": 1.0
+     },
+     "refuse": {
+      "n": 4,
+      "pass_rate": 1.0
+     },
+     "slang": {
+      "n": 6,
+      "pass_rate": 1.0
+     },
+     "timeliness": {
+      "n": 4,
+      "pass_rate": 0.5
+     }
+    },
+    "fails": [
+     {
+      "id": 1,
+      "type": "fact",
+      "refusal": false
+     },
+     {
+      "id": 6,
+      "type": "fact",
+      "refusal": false
+     },
+     {
+      "id": 27,
+      "type": "timeliness",
+      "refusal": false
+     },
+     {
+      "id": 28,
+      "type": "timeliness",
+      "refusal": false
+     }
+    ]
+   }
+  },
+  {
+   "eval_set": "v2",
+   "current": {
+    "variant": "hybrid_full",
+    "n": 78,
+    "recall@5": 0.9808,
+    "mrr": 0.984,
+    "stale_leaks": 0
+   },
+   "ablation": [
+    {
+     "variant": "bm25_production",
+     "n": 78,
+     "recall@5": 0.9722,
+     "mrr": 0.9487,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "bm25_only",
+     "n": 78,
+     "recall@5": 0.9786,
+     "mrr": 0.9487,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "vector_only",
+     "n": 78,
+     "recall@5": 0.9722,
+     "mrr": 0.9748,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "hybrid_no_boost",
+     "n": 78,
+     "recall@5": 0.9872,
+     "mrr": 0.9808,
+     "stale_leaks": 0
+    },
+    {
+     "variant": "hybrid_full",
+     "n": 78,
+     "recall@5": 0.9808,
+     "mrr": 0.984,
+     "stale_leaks": 0
+    }
+   ],
+   "e2e": {
+    "total": 90,
+    "overall_pass_rate": 0.9333,
+    "p50_latency_ms": 328.0,
+    "by_type": {
+     "fact": {
+      "n": 25,
+      "pass_rate": 0.96
+     },
+     "compare": {
+      "n": 15,
+      "pass_rate": 0.8667
+     },
+     "calc": {
+      "n": 15,
+      "pass_rate": 1.0
+     },
+     "refuse": {
+      "n": 12,
+      "pass_rate": 0.9167
+     },
+     "timeliness": {
+      "n": 8,
+      "pass_rate": 1.0
+     },
+     "slang": {
+      "n": 8,
+      "pass_rate": 0.75
+     },
+     "multi": {
+      "n": 7,
+      "pass_rate": 1.0
+     }
+    },
+    "fails": [
+     {
+      "id": 105,
+      "type": "fact",
+      "refusal": false
+     },
+     {
+      "id": 129,
+      "type": "compare",
+      "refusal": false
+     },
+     {
+      "id": 131,
+      "type": "compare",
+      "refusal": false
+     },
+     {
+      "id": 167,
+      "type": "refuse",
+      "refusal": false
+     },
+     {
+      "id": 179,
+      "type": "slang",
+      "refusal": false
+     },
+     {
+      "id": 183,
+      "type": "slang",
+      "refusal": false
+     }
+    ]
+   }
+  }
+ ]
+}

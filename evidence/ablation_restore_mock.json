@@ -1,0 +1,6 @@
+{
+ "phase": "restore_mock",
+ "chunks": 68,
+ "nonzero_after": 68,
+ "note": "恢复 FORCE_MOCK 哈希向量口径（MockLLMClient.embed 确定性重建），冻结 mock 数字复现前提；hybrid 实验前须重跑 --phase embed"
+}

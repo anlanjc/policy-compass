@@ -1,0 +1,12 @@
+{
+ "phase": "embed",
+ "usage_est": {
+  "embed_api_calls": 7,
+  "chunks": 68,
+  "input_chars": 30852,
+  "elapsed_s": 11.1,
+  "dim": 1024,
+  "nonzero_after": 68
+ },
+ "note": "token 用量：/embeddings 响应的 usage 字段 LLMClient 未捕获——以输入字符数上界估 token（中文 ≈1 token/字），花费以百炼账单为准"
+}

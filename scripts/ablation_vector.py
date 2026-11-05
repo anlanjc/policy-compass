@@ -132,19 +132,24 @@ async def phase_embed(approved: bool) -> None:
     real = LLMClient()
     store = IndexStore()
     rows = store._conn.execute(
-        "SELECT c.chunk_id, d.title, c.text FROM chunks c JOIN docs d ON c.doc_id=d.doc_id"
-        " ORDER BY c.doc_id, c.seq"
+        "SELECT chunk_id, text FROM chunks ORDER BY doc_id, seq"
     ).fetchall()
-    inputs = [f"{r[1]}\n{r[2]}" for r in rows]  # 逐字复刻 _ingest 的 embed 输入
+    # 逐字复刻 _ingest 的 embed 输入：f"{c.title}\n{c.text}"——注意 splitter._pack
+    # 构造 Chunk 时从不赋值 title（恒为默认 ""），故生产输入实为 "\n"+正文
+    # （标题经 text 首行《标题》进入，功能无损，冗余前缀 quirk 记入 ablation.md）
+    inputs = ["\n" + r[1] for r in rows]
     chars = sum(len(t) for t in inputs)
+    # DashScope text-embedding-v4 批量上限 10（实测 400 InvalidParameter），
+    # config.embed_batch_size=32 是 OpenAI/SiliconFlow 口径——本阶段钳到 10，查询侧单条不受影响
+    batch_size = min(settings.embed_batch_size, 10)
     print(f"[embed] chunks={len(rows)} total_chars={chars} model={settings.embed_model}"
-          f" base={settings.effective_embed_base}")
+          f" base={settings.effective_embed_base} batch={batch_size}")
     t0 = time.perf_counter()
     vecs: list[list[float]] = []
-    for i in range(0, len(inputs), settings.embed_batch_size):
-        batch = inputs[i : i + settings.embed_batch_size]
+    for i in range(0, len(inputs), batch_size):
+        batch = inputs[i : i + batch_size]
         vecs.extend(await real.embed(batch))
-        print(f"[embed] batch {i // settings.embed_batch_size + 1}: cum={len(vecs)}")
+        print(f"[embed] batch {i // batch_size + 1}: cum={len(vecs)}")
     dt = time.perf_counter() - t0
     dims = {len(v) for v in vecs}
     assert dims == {settings.embed_dim}, f"维度不符：返回 {dims}，配置 {settings.embed_dim}"
@@ -155,7 +160,7 @@ async def phase_embed(approved: bool) -> None:
         )
     store.load_cache()
     n_total, n_nonzero = _db_vector_state(store)
-    usage = {"embed_api_calls": (len(inputs) + settings.embed_batch_size - 1) // settings.embed_batch_size,
+    usage = {"embed_api_calls": (len(inputs) + batch_size - 1) // batch_size,
              "chunks": len(rows), "input_chars": chars, "elapsed_s": round(dt, 1),
              "dim": settings.embed_dim, "nonzero_after": n_nonzero}
     _dump("ablation_embed.json", {
@@ -165,6 +170,37 @@ async def phase_embed(approved: bool) -> None:
     })
     print(f"[embed] done: {usage}, nonzero rows after = {n_nonzero}/{n_total}")
     await real.close()
+
+
+async def phase_restore_mock() -> None:
+    """把库向量恢复为 FORCE_MOCK 哈希口径（md5 纯函数，逐字节确定）。
+
+    冻结 mock 数字（v2 e2e 91.1% 等）的记录前提是哈希向量库；消融实验把库换成
+    真实向量后，mock 模式复现冻结数字需先恢复本口径。生产 real 模式
+    （EMBED_ENABLED=false→查询零向量→向量腿空）不受库内容影响。
+    """
+    from app.llm.mock import MockLLMClient
+
+    mock = MockLLMClient()
+    store = IndexStore()
+    rows = store._conn.execute(
+        "SELECT chunk_id, text FROM chunks ORDER BY doc_id, seq"
+    ).fetchall()
+    inputs = ["\n" + r[1] for r in rows]  # 逐字复刻 _ingest：Chunk.title 恒空 → "\n"+正文
+    vecs = await mock.embed(inputs)  # md5 词袋哈希，无随机、无网络
+    with store._conn:
+        store._conn.executemany(
+            "UPDATE chunks SET embedding=? WHERE chunk_id=?",
+            [(np.asarray(v, dtype=np.float32).tobytes(), r[0]) for v, r in zip(vecs, rows)],
+        )
+    store.load_cache()
+    n_total, n_nonzero = _db_vector_state(store)
+    print(f"[restore_mock] {len(rows)} chunks -> hash vectors, nonzero {n_nonzero}/{n_total}")
+    _dump("ablation_restore_mock.json", {
+        "phase": "restore_mock", "chunks": len(rows), "nonzero_after": n_nonzero,
+        "note": "恢复 FORCE_MOCK 哈希向量口径（MockLLMClient.embed 确定性重建），"
+                "冻结 mock 数字复现前提；hybrid 实验前须重跑 --phase embed",
+    })
 
 
 async def phase_hybrid() -> None:
@@ -233,7 +269,7 @@ def _print(out: dict) -> None:
 
 async def main_async() -> int:
     ap = argparse.ArgumentParser(description="向量腿消融三阶段（bm25/embed/hybrid）")
-    ap.add_argument("--phase", choices=["bm25", "embed", "hybrid"], required=True)
+    ap.add_argument("--phase", choices=["bm25", "embed", "hybrid", "restore_mock"], required=True)
     ap.add_argument("--approved", action="store_true",
                     help="embed 阶段的批准显式开关（等价 AB_APPROVED=1 环境变量）")
     args = ap.parse_args()
@@ -241,6 +277,8 @@ async def main_async() -> int:
         await phase_bm25()
     elif args.phase == "embed":
         await phase_embed(approved=args.approved or os.environ.get("AB_APPROVED") == "1")
+    elif args.phase == "restore_mock":
+        await phase_restore_mock()
     else:
         await phase_hybrid()
     return 0
