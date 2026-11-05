@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from typing import AsyncIterator
@@ -26,6 +27,8 @@ from fastapi.responses import StreamingResponse
 from ..agent.state import AgentState
 from ..config import settings
 from ..llm.stats import stats
+
+logger = logging.getLogger(__name__)
 from .schemas import (
     ChatRequest,
     ChatResponse,
@@ -48,15 +51,34 @@ def get_app_state(request=None):
 
 
 async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
-    """token 级 SSE：事件用 type=trace 推送，答案用 type=token 推送。"""
+    """token 级 SSE：事件用 type=trace 推送，答案用 type=token 推送。
+
+    与非流式同构留档（S3 评审 PC-10）：done/fallback/error 前调 recorder.record，
+    自带前端固定走 stream——不留档则"全链路 JSONL 复盘"声明对主路径失效。
+    """
     agent_nodes = ctx["agent"].nodes
     llm = ctx["llm"]
     start = time.perf_counter()
+    trace_id = req.thread_id or str(uuid.uuid4())
+    stream_events: list[dict] = []  # 已推送的 trace 事件（留档用，与 state 事件同构）
 
     def sse(payload: dict) -> str:
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    yield sse({"type": "meta", "trace_id": req.thread_id or str(uuid.uuid4()),
+    def trace(ev: dict) -> str:
+        stream_events.append(ev)
+        return sse({"type": "trace", "event": ev})
+
+    def record(answer: str, refusal: bool, sources: list, evs: list[dict]) -> None:
+        try:
+            ctx["recorder"].record(
+                trace_id, req.question, evs, answer, refusal, sources,
+                round((time.perf_counter() - start) * 1000, 1),
+            )
+        except Exception:  # 留档失败不影响应答链路（S3 评审 PC-10）
+            logger.warning("stream trace 留档失败", exc_info=True)
+
+    yield sse({"type": "meta", "trace_id": trace_id,
                "llm_mode": settings.effective_llm_mode})
 
     state: AgentState = {
@@ -69,18 +91,18 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
         # --- 前置阶段：与图相同的节点函数 ---
         state.update(await agent_nodes["route"](state))
         for ev in state["events"]:
-            yield sse({"type": "trace", "event": ev})
+            yield trace(ev)
 
         state = dict(state)
         state["events"] = []
         state.update(await agent_nodes["retrieve"](state))
         for ev in state["events"]:
-            yield sse({"type": "trace", "event": ev})
+            yield trace(ev)
 
         graded = await agent_nodes["grade"](state)
         state.update(graded)
         for ev in graded.get("events", []):
-            yield sse({"type": "trace", "event": ev})
+            yield trace(ev)
 
         from ..agent.graph import _after_grade, _after_verify  # 复用条件边逻辑
 
@@ -90,21 +112,22 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
             state["events"] = []
             state.update(await agent_nodes["rewrite"](state))
             for ev in state["events"]:
-                yield sse({"type": "trace", "event": ev})
+                yield trace(ev)
             state["events"] = []
             state.update(await agent_nodes["retrieve"](state))
             for ev in state["events"]:
-                yield sse({"type": "trace", "event": ev})
+                yield trace(ev)
             graded = await agent_nodes["grade"](state)
             state.update(graded)
             for ev in graded.get("events", []):
-                yield sse({"type": "trace", "event": ev})
+                yield trace(ev)
             decision = _after_grade(state)
             rewrite_round += 1
 
         if decision == "fallback" or (decision == "rewrite"):
             state.update(await agent_nodes["fallback"](state))
             yield sse({"type": "token", "text": state["answer"]})
+            record(state["answer"], True, [], list(state.get("events", [])) + stream_events)
             yield sse({"type": "done", "answer": state["answer"], "refusal": True,
                        "sources": [], "tool_result": None,
                        "latency_ms": round((time.perf_counter() - start) * 1000, 1)})
@@ -114,7 +137,7 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
             state["events"] = []
             state.update(await agent_nodes["tool"](state))
             for ev in state["events"]:
-                yield sse({"type": "trace", "event": ev})
+                yield trace(ev)
 
         # --- 生成：token 级流式（图外接管） ---
         msgs, docs = ctx["agent"].build_generation_messages(state)
@@ -137,12 +160,14 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
         # --- 流后忠实度校验 ---
         v_state = await agent_nodes["verify"](state)
         if not v_state.get("verified"):
-            yield sse({"type": "trace", "event": {"event": "verify", "grounded": False,
-                        "note": "流式回答未通过忠实度校验，触发重写"}})
+            yield trace({"event": "verify", "grounded": False,
+                         "note": "流式回答未通过忠实度校验，触发重写"})
             state["generation_attempts"] = 1
             state["answer"] = await llm.chat(msgs, temperature=0.1)
             yield sse({"type": "correction", "answer": state["answer"]})
 
+        record(state["answer"], False, state["sources"],
+               list(state.get("events", [])) + stream_events)
         yield sse({
             "type": "done",
             "answer": state["answer"],
@@ -151,8 +176,12 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
             "tool_result": state.get("tool_result"),
             "latency_ms": round((time.perf_counter() - start) * 1000, 1),
         })
-    except Exception as e:  # 全局兜底：任何异常都以 error 事件结束，绝不悬挂连接
-        yield sse({"type": "error", "detail": str(e)[:300]})
+    except Exception:  # 全局兜底：任何异常都以 error 事件结束，绝不悬挂连接
+        # S3 评审 PC-9：异常明文（上游响应体/内部 URL）不外发——固定文案对外，
+        # 详情仅进服务端日志；留档照常（带 error 事件可复盘）
+        logger.exception("stream 处理失败 trace_id=%s", trace_id)
+        record("", False, [], stream_events)
+        yield sse({"type": "error", "detail": "服务内部错误，请稍后重试（详情见服务端日志）"})
 
 
 @router.post("/chat")

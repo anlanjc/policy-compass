@@ -130,3 +130,116 @@ async def test_write_endpoints_auth(temp_env, monkeypatch):
             chat = (await c.post("/api/chat", json={"question": "测试文档规定每月最高提取多少"})).json()
             assert "2600" in chat["answer"]
             assert (await c.delete("/api/documents/t.md", headers=h)).status_code == 200
+
+
+# ---------- S3 评审 PC-8/PC-9 回归 ----------
+
+async def test_grade_fallback_on_unlisted_exception(components, monkeypatch):
+    """PC-8：未列名异常（如 RuntimeError）在评分环节记 0.3 保守分，不炸整请求。"""
+    from app.agent.nodes import make_nodes
+
+    llm = components["llm"]
+    async def boom(*a, **k):
+        raise RuntimeError("上游 200+HTML 页")
+    monkeypatch.setattr(llm, "chat_json", boom)
+
+    nodes = make_nodes(components["retriever"], llm)
+    state = {"query": "杭州租房提取额度", "documents": [
+        {"chunk_id": "c1", "title": "杭州市住房公积金租赁提取管理实施细则",
+         "text": "《杭州市住房公积金租赁提取管理实施细则》第二条 每人每月最高可提取额度为2000元"},
+    ]}
+    out = await nodes["grade"](state)
+    assert out["documents"][0]["grade"] == 0.3
+    assert "RuntimeError" in out["documents"][0]["grade_reason"]
+
+
+async def test_llm_non_json_body_raises_llmerror(temp_env, monkeypatch):
+    """PC-8：200+非 JSON 体按可重试 LLMError 处理，JSONDecodeError 不得穿透。"""
+    import httpx
+
+    from app.config import settings
+    from app.llm.client import LLMClient, LLMError
+
+    monkeypatch.setattr(settings, "llm_max_retries", 0)
+    c = LLMClient()
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(200, text="<html>代理错误页</html>")
+
+    await c._http.aclose()
+    c._http = httpx.AsyncClient(transport=httpx.MockTransport(handler),
+                                base_url=settings.llm_api_base)
+    try:
+        try:
+            await c.chat([{"role": "user", "content": "hi"}])
+            raised = ""
+        except LLMError as e:
+            raised = str(e)
+        assert "响应非 JSON" in raised
+        assert calls["n"] == 1  # max_retries=0：单次尝试
+    finally:
+        await c._http.aclose()
+
+
+async def test_stream_error_frame_sanitized(temp_env, monkeypatch):
+    """PC-9：流式兜底 error 帧不外发异常明文（上游响应体/内部 URL）。"""
+    import httpx
+
+    from app.api import routes
+    from app.api.main import app
+
+    async with app.router.lifespan_context(app):
+        ctx = routes.get_app_state()
+        async def boom(state):
+            raise RuntimeError("HTTP 401: sk-secret-key LeakedBody https://internal-dashscope/x")
+        monkeypatch.setattr(ctx["agent"], "nodes",
+                            {**ctx["agent"].nodes, "route": boom})
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=60
+        ) as c:
+            async with c.stream("POST", "/api/chat",
+                                json={"question": "杭州租房提取", "stream": True}) as resp:
+                body = ""
+                async for line in resp.aiter_lines():
+                    body += line + "\n"
+        assert "LeakedBody" not in body and "sk-secret" not in body
+        assert "internal-dashscope" not in body
+        assert '"type": "error"' in body.replace(" ", " ") or '"type":"error"' in body
+
+
+def test_metadata_title_sanitized():
+    """PC-6 后端纵深：上传标题/文号剥离 HTML 危险字符。"""
+    from app.ingestion.metadata import extract_metadata
+
+    meta = extract_metadata(
+        "x.md",
+        "# <img src=x onerror=alert(1)>深圳租房提取办法（演示）\n"
+        "【发文字号】深公积金〔2026〕1号\n【状态】现行有效\n【适用城市】深圳\n\n"
+        "第一条 深圳无房职工租赁提取每人每月最高2600元，按实际租金核算执行。\n",
+    )
+    assert "<" not in meta.title and ">" not in meta.title and '"' not in meta.title
+    assert "深圳租房提取办法" in meta.title
+
+
+async def test_stream_records_trace_jsonl(temp_env):
+    """PC-10：stream 路径与非流式同构留档（此前主路径全程无档可复盘）。"""
+    import httpx
+
+    from app.api.main import app
+    from app.config import settings
+    from pathlib import Path
+
+    trace_file = Path(settings.trace_dir) / "traces.jsonl"
+    n0 = len(trace_file.read_text(encoding="utf-8").splitlines()) if trace_file.exists() else 0
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=60
+        ) as c:
+            async with c.stream("POST", "/api/chat",
+                                json={"question": "杭州租房提取每月最多能提多少", "stream": True}) as resp:
+                async for _ in resp.aiter_lines():
+                    pass
+    n1 = len(trace_file.read_text(encoding="utf-8").splitlines()) if trace_file.exists() else 0
+    assert n1 == n0 + 1  # 流式请求恰好落一条与 JSONL

@@ -43,6 +43,13 @@ _META_PATTERNS = {
 
 # ---- 脏文档兜底模式：真实公文（含 OCR 转录文本）没有元数据头，从正文抽取 ----
 _DIRTY_DOC_NO = re.compile(r"[\u4e00-\u9fff]{2,12}〔\d{4}〕\d+号")
+
+_HTML_DANGEROUS = re.compile(r'[<>&"\']')
+
+
+def _strip_html_chars(s: str) -> str:
+    """剥离 HTML 危险字符（标题/文号入库前的纵深防御，S3 评审 PC-6）。"""
+    return _HTML_DANGEROUS.sub("", s)
 # 施行/实施两种公文表述都接受（实测真实文件两种都在用）
 _DIRTY_EFFECTIVE = re.compile(r"[自](\d{4})年(\d{1,2})月(\d{1,2})日起?(?:实施|施行)")
 _KNOWN_CITIES = ("杭州", "上海", "北京", "深圳", "广州", "成都")
@@ -101,6 +108,11 @@ def extract_metadata(file_name: str, content: str) -> PolicyMeta:
         _fallback_extract(meta, content)
     if not meta.title:
         meta.title = file_name
+    # 纵深防御（S3 评审 PC-6）：title/doc_no 来自上传内容首行，会被前端引用卡渲染——
+    # 剥离 HTML 危险字符，`# <img onerror=...>` 之类的投毒行不得原样入库
+    meta.title = _strip_html_chars(meta.title)
+    if meta.doc_no:
+        meta.doc_no = _strip_html_chars(meta.doc_no)
     # 规范化
     if meta.city not in ("杭州", "上海", "北京", "深圳", "广州", "成都"):
         meta.city = "全国" if meta.city in ("全国", "") else meta.city

@@ -19,6 +19,7 @@
 - Free 档 15 分钟无流量会休眠，首次唤醒要 30-60 秒——演示前先自己点开一次。
 - **端口**：Render 的 Docker 运行时默认期望应用监听 `PORT`（10000）；本项目默认 `APP_PORT=8000`，在平台环境变量里加一行 `APP_PORT=10000` 即可对齐（pydantic Settings 自动读取）。
 - **语料已在镜像里**：Dockerfile `COPY data ./data` 把 16 份真实语料（含 OCR 缓存）打进镜像，首次启动自动增量摄取（BM25 索引，秒级完成），无需挂载外部存储。
+- **公网部署必读（S3 评审 PC-3 后的新默认）**：知识库写接口（上传/删除/重摄取）**默认整体禁用**（403）；需要 API 热更新时配置 `POLICY_COMPASS_ADMIN_KEY=<随机长串>`，调用方带 `X-Admin-Key` 头。跨域前端另配 `POLICY_COMPASS_CORS_ORIGINS`（JSON 数组，默认仅同源）。问答/健康/统计等读接口无需密钥。
 
 ## 方案 B：Railway / Fly.io
 

@@ -63,11 +63,13 @@
 | v1 smoke（real） | 33 | **100.0%**（33/33，历史 2 例评分抖动误拒被扩展机制修复消解） | 20.1s | `evidence/eval_v1_real_pc3.md` |
 | v2 full（real） | 90 | **93.3%**（84/90，与冻结口径持平；refuse 12/12 零编造，calc 14/15） | 14.7s | `evidence/eval_v2_real_pc3.md` |
 
-- v2 real 分题型：fact 96.0% / compare 86.7% / calc **100%**（Function Calling 额度全对）/ refuse **100%**（12/12 零编造）/ 时效 87.5% / 黑话 87.5% / 多跳 85.7%。
-- 6 条未通过归因（`evidence/fail_analysis.md`）：2 条评分抖动误拒（方向=宁可不答，无编造）、1 条误称"未收录"（保守方向）、3 条金标数字写法变体（模型把"百分之六十五"规范化为"65%"、"三个月"→"3个"）；并入写法变体后 post-hoc 96.7%（87/90，**事后分析未重跑**，正式口径以冻结金标 93.3% 为准）。
-- usage：llm_requests=866 retries=0 failures=0 prompt_tokens=536,170 completion_tokens=130,307 refusals=14 tool_calls=19。
+- **PC-3 复测实际分题型**（`evidence/eval_v2_real_pc3.md`）：fact 88.0% / compare 93.3% / calc 93.3%（14/15，#144 沪家庭额度误拒）/ refuse **100%**（12/12 零编造）/ 时效 100% / 黑话 100% / 多跳 85.7%；失败集 **#113/#114/#116/#131/#144/#190**（多为金标写法变体与保守方向误拒，`evidence/fail_analysis.md`）。v1 复测 33/33 全过。
+- **冻结轮分题型与归因（2026-10-29 `evidence/eval_v2_real.md`/`eval_v1_real.md` 口径，非 PC-3 复测数据，归属标注修正见 S3 评审 PC-11）**：
+  - v2 分题型：fact 96.0% / compare 86.7% / calc **100%**（Function Calling 额度全对）/ refuse **100%**（12/12 零编造）/ 时效 87.5% / 黑话 87.5% / 多跳 85.7%。
+  - 冻结轮 6 条未通过归因：2 条评分抖动误拒（方向=宁可不答，无编造）、1 条误称"未收录"（保守方向）、3 条金标数字写法变体（模型把"百分之六十五"规范化为"65%"、"三个月"→"3个"）；并入写法变体后 post-hoc 96.7%（87/90，**事后分析未重跑**，正式口径以冻结金标 93.3% 为准）。
+- PC-3 复测 usage：llm_requests=866 retries=0 failures=0 prompt_tokens=536,170 completion_tokens=130,307 refusals=14 tool_calls=19。
 - provider：阿里云百炼 DashScope 兼容模式，`deepseek-v4-flash-0731`（推理模型）；embedding 关闭（额度不可用），检索为 BM25+业务加权。
-- v1 real 分题型：fact 88.9%（8/9）/ compare 100% / calc 100% / refuse 100% / slang 100% / 时效 75%（3/4）；2 条失败（#31 已故职工小额提取、#29 上海居转户基数）均为评分抖动误拒——答案方向是"宁可不答"而非编造，与历史口径的 2 例时效误拒同类。usage：llm_requests=337 retries=0 failures=0 prompt_tokens=214,875 completion_tokens=59,570。
+- 冻结轮 v1 分题型（2026-10-29 `evidence/eval_v1_real.md`）：fact 88.9%（8/9）/ compare 100% / calc 100% / refuse 100% / slang 100% / 时效 75%（3/4）；2 条失败（#31 已故职工小额提取、#29 上海居转户基数）均为评分抖动误拒——答案方向是"宁可不答"而非编造。usage：llm_requests=337 retries=0 failures=0 prompt_tokens=214,875 completion_tokens=59,570。
 - 真模型总花费：两轮合计 ≈0.94M 输入 + 0.19M 输出 token，按 flash 档典型价（输入 ¥0.5~2/M、输出 ¥2~8/M）估算 **≈¥1~2.5**（中位 ≈¥1.7），以百炼账单为准（预算上限 ¥3，未超）。
 - holdout 说明：15 条在评测集构建时随机分层抽出，未参与 lexicon/提示词/加权任何调整。
 

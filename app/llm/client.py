@@ -109,7 +109,12 @@ class LLMClient:
                     raise LLMError(
                         f"HTTP {resp.status_code}: {resp.text[:200]}"
                     ) from e
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError as e:
+                    # 200 + 非 JSON 体（截断/内网代理页）按可重试错误处理（S3 评审 PC-8），
+                    # 否则 JSONDecodeError 绕过重试与 LLMError 包装，穿透 grade 兜底
+                    raise LLMError(f"响应非 JSON: {resp.text[:120]}") from e
                 usage = data.get("usage") or {}
                 stats.incr("prompt_tokens", usage.get("prompt_tokens", 0))
                 stats.incr("completion_tokens", usage.get("completion_tokens", 0))

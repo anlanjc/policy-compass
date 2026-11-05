@@ -140,9 +140,12 @@ def make_nodes(retriever, llm):
                     )
                 doc["grade"] = g.score
                 doc["grade_reason"] = g.reason
-            except (StructuredOutputError, LLMError, TimeoutError):
+            except Exception as e:
+                # 兜底放宽为 Exception（S3 评审 PC-8）：上游 200+非 JSON 体等
+                # 未列名异常此前穿透 → 整请求 500 且兄弟评分协程失控，
+                # 与"评分失败记 0.3 保守分"的模块契约不符
                 doc["grade"] = 0.3  # 保守分：评分失败不惩罚检索、但不会误判为强相关
-                doc["grade_reason"] = "评分失败，保守记分"
+                doc["grade_reason"] = f"评分失败，保守记分（{type(e).__name__}）"
             return doc["grade"]
 
         t0 = time.perf_counter()

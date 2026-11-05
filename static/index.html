@@ -293,7 +293,15 @@ function addEvent(ev) {
   const f = EV_LABEL[ev.event];
   if (f) { [label, detail] = f(ev); }
   else { label = ev.event; detail = ''; }
-  div.innerHTML = `<b>${label}</b><div class="detail">${detail}</div>`;
+  // textContent 组装（S3 评审 PC-6）：trace 事件内嵌 query/new_query 用户原文，
+  // innerHTML 拼接会被注入的标题/问题文本执行
+  const b = document.createElement('b');
+  b.textContent = label;
+  const d = document.createElement('div');
+  d.className = 'detail';
+  d.textContent = detail;
+  div.appendChild(b);
+  div.appendChild(d);
   eventsEl.appendChild(div);
   eventsEl.scrollTop = eventsEl.scrollHeight;
 }
@@ -358,14 +366,26 @@ async function send(e) {
       if (done.sources && done.sources.length) {
         const box = document.createElement('div');
         box.className = 'sources';
-        box.innerHTML = done.sources.map(s =>
-          `<div class="src ${s.is_valid ? '' : 'invalid'}">《${s.title}》<br>` +
-          `<span class="doc-no">${s.doc_no || '（无文号记录）'}</span>` +
-          ` · 生效 ${s.effective_date || '—'}` +
-          `${s.sections && s.sections.length ? ' · ' + s.sections.join('、') : ''}` +
-          `${s.pages && s.pages.length ? ' · 第' + s.pages.join('、') + '页' : ''}` +
-          ` <span class="st ${s.is_valid ? 'ok' : ''}">${s.is_valid ? '现行有效' : '已废止'}</span></div>`
-        ).join('');
+        // textContent 组装（S3 评审 PC-6）：title/doc_no 来自上传内容，
+        // innerHTML 拼接会执行注入的标题（存储型 XSS 主向量）
+        for (const s of done.sources) {
+          const card = document.createElement('div');
+          card.className = 'src ' + (s.is_valid ? '' : 'invalid');
+          const add = (text, cls) => {
+            if (!text) return;
+            const el = cls ? document.createElement('span') : document.createTextNode(text);
+            if (cls) { el.className = cls; el.textContent = text; }
+            card.appendChild(el);
+          };
+          add(`《${s.title}》`);
+          card.appendChild(document.createElement('br'));
+          add(s.doc_no || '（无文号记录）', 'doc-no');
+          add(` · 生效 ${s.effective_date || '—'}`);
+          if (s.sections && s.sections.length) add(' · ' + s.sections.join('、'));
+          if (s.pages && s.pages.length) add(' · 第' + s.pages.join('、') + '页');
+          add(` ${s.is_valid ? '现行有效' : '已废止'}`, 'st' + (s.is_valid ? ' ok' : ''));
+          box.appendChild(card);
+        }
         ai.querySelector('.bubble').appendChild(box);
       }
       const meta = document.createElement('div');
