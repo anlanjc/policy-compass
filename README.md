@@ -4,6 +4,23 @@
 >
 > 站在 [Datawhale《All in RAG》](https://github.com/datawhalechina/all-in-rag) 教程"四步构建 RAG"之上的业务化演进：教程教 RAG 基础，本项目补上教程尚未覆盖的 **Agentic RAG** 专题，并以政策问答这一强约束场景做深。
 
+[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-29%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量消融_hybrid-98.1%25-blue)]()
+
+## 架构总览
+
+```mermaid
+flowchart LR
+    Q[用户提问<br/>跨城/黑话口语] --> R{{混合检索<br/>BM25+向量·城市加权}}
+    R --> CRAG{{CRAG 自纠错}}
+    CRAG -->|正确| FC[Function Calling<br/>精确计算工具]
+    CRAG -->|存疑| RW[查询改写<br/>黑话词典 token 化扩展] --> R
+    CRAG -->|语料外| REF[诚实拒答<br/>编造=0]
+    FC --> FV{{忠实度校验<br/>数字 vs 检索原文}}
+    FV --> CITE[引用定位<br/>chunk 级条款/页码/文号徽章]
+    FV -->|不忠实| REF
+    CITE --> A[SSE 流式答案<br/>卷宗时间线面板]
+```
+
 ## 界面速览
 
 | Function Calling 计算 + 工具调用 Trace | CRAG 自纠错循环 → 诚实拒答 |
