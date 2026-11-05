@@ -4,7 +4,7 @@
   "embed_api_calls": 7,
   "chunks": 68,
   "input_chars": 30852,
-  "elapsed_s": 11.1,
+  "elapsed_s": 17.3,
   "dim": 1024,
   "nonzero_after": 68
  },
