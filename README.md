@@ -4,7 +4,7 @@
 >
 > 站在 [Datawhale《All in RAG》](https://github.com/datawhalechina/all-in-rag) 教程"四步构建 RAG"之上的业务化演进：教程教 RAG 基础，本项目补上教程尚未覆盖的 **Agentic RAG** 专题，并以政策问答这一强约束场景做深。
 
-[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-29%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量消融_hybrid-98.1%25-blue)]()
+[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-29%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量腿已真模型复验-生产维持BM25·结论留档-blue)]()
 
 ## 架构总览
 
