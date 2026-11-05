@@ -29,14 +29,19 @@ async def test_chat_json_schema_repair(components):
     assert 0 <= g.score <= 1
 
 
-async def test_api_endpoints(temp_env):
+async def test_api_endpoints(temp_env, monkeypatch):
     import httpx
 
     from app.api.main import app
+    from app.config import settings
+
+    # S3 评审 PC-3：写接口须配管理密钥；本测试启用并携带 X-Admin-Key
+    monkeypatch.setattr(settings, "admin_key", "test-admin-key")
 
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=60
+            transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=60,
+            headers={"X-Admin-Key": "test-admin-key"},
         ) as c:
             health = (await c.get("/api/health")).json()
             assert health["status"] == "ok" and health["docs"] > 0
@@ -85,3 +90,43 @@ async def test_api_endpoints(temp_env):
             await c.delete("/api/documents/shenzhen_demo.md")
             gone = (await c.get("/api/documents")).json()["documents"]
             assert all(d["doc_id"] != "shenzhen_demo.md" for d in gone)
+
+
+# ---------- S3 评审 PC-3 回归：知识库写接口鉴权 ----------
+
+async def test_write_endpoints_auth(temp_env, monkeypatch):
+    """默认禁用（403）→ 配 key 后无头 401 / 错头 401 / 对头 200；读接口不受影响。"""
+    import httpx
+
+    from app.api.main import app
+    from app.config import settings
+
+    demo = (
+        "# 深圳租房提取测试办法（演示）\n【发文字号】测〔2026〕1号\n【状态】现行有效\n"
+        "【适用城市】深圳\n【领域】公积金\n\n"
+        "第一条 深圳无房职工租赁提取每人每月最高2600元，未办理租赁备案的按实际租金核算。\n"
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", timeout=60
+        ) as c:
+            # 1) 未配置 key：写接口整体禁用
+            monkeypatch.setattr(settings, "admin_key", "")
+            assert (await c.post("/api/documents", json={"filename": "t.md", "content": demo})).status_code == 403
+            assert (await c.delete("/api/documents/t.md")).status_code == 403
+            assert (await c.post("/api/ingest/sync")).status_code == 403
+            # 读接口不受影响
+            assert (await c.get("/api/documents")).status_code == 200
+
+            # 2) 配置 key：无头/错头 401
+            monkeypatch.setattr(settings, "admin_key", "secret-key")
+            assert (await c.post("/api/documents", json={"filename": "t.md", "content": demo})).status_code == 401
+            assert (await c.delete("/api/documents/t.md", headers={"X-Admin-Key": "wrong"})).status_code == 401
+
+            # 3) 正确 key：放行，且上传内容可检索、可删除
+            h = {"X-Admin-Key": "secret-key"}
+            up = await c.post("/api/documents", json={"filename": "t.md", "content": demo}, headers=h)
+            assert up.status_code == 200 and up.json()["chunks"] >= 1
+            chat = (await c.post("/api/chat", json={"question": "测试文档规定每月最高提取多少"})).json()
+            assert "2600" in chat["answer"]
+            assert (await c.delete("/api/documents/t.md", headers=h)).status_code == 200

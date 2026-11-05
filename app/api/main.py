@@ -67,7 +67,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # 跨域白名单（S3 评审 PC-3）：默认空=仅同源（演示前端由本服务托管，天然同源）；
+    # 跨域演示前端用 POLICY_COMPASS_CORS_ORIGINS 显式列出，不再放 *（drive-by 防护）
+    allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

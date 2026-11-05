@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     history_window: int = 6  # 多轮对话携带历史轮数（token 成本控制）
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    # 知识库写接口（上传/删除/重摄取）管理密钥：未配置 = 写接口整体禁用（403），
+    # 公网部署防投毒/清空（S3 评审 PC-3）；配置后写请求须带 X-Admin-Key 头
+    admin_key: str = ""
+    # 跨域白名单（浏览器跨域演示才需要；默认空 = 仅同源，CORS 不放 *）
+    cors_origins: list[str] = []
 
     # 支持的城市与领域（路由与元数据过滤的词表）
     cities: list[str] = ["杭州", "上海", "北京", "深圳", "广州", "成都", "全国"]

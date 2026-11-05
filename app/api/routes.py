@@ -19,7 +19,8 @@ import time
 import uuid
 from typing import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+import secrets
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
 from ..agent.state import AgentState
@@ -190,13 +191,30 @@ async def chat(req: ChatRequest):
 # ---------- 文档管理（知识库热更新） ----------
 
 
+async def require_admin_key(x_admin_key: str | None = Header(default=None)) -> None:
+    """知识库写接口鉴权（S3 评审 PC-3）：公网部署下匿名上传=可投毒假政策、
+    匿名删除=可清空语料。默认拒绝：未配置 POLICY_COMPASS_ADMIN_KEY 时写接口
+    整体禁用；配置后校验 X-Admin-Key（常数时间比较）。读接口不受影响。
+    """
+    key = settings.admin_key
+    if not key:
+        raise HTTPException(
+            403,
+            "知识库写接口已禁用：配置 POLICY_COMPASS_ADMIN_KEY 后方可调用"
+            "（公网部署防投毒/清空，见 DEPLOY.md）",
+        )
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, key):
+        raise HTTPException(401, "X-Admin-Key 缺失或不正确")
+
+
 @router.get("/documents")
 async def list_documents():
     ctx = get_app_state()
     return {"documents": ctx["store"].list_docs()}
 
 
-@router.post("/documents", response_model=DocumentUploadResponse)
+@router.post("/documents", response_model=DocumentUploadResponse,
+             dependencies=[Depends(require_admin_key)])
 async def upload_document(body: DocumentUpload):
     ctx = get_app_state()
     try:
@@ -207,7 +225,7 @@ async def upload_document(body: DocumentUpload):
     return DocumentUploadResponse(doc_id=body.filename, chunks=n)
 
 
-@router.delete("/documents/{doc_id}")
+@router.delete("/documents/{doc_id}", dependencies=[Depends(require_admin_key)])
 async def delete_document(doc_id: str):
     ctx = get_app_state()
     n = ctx["store"].remove_doc(doc_id)
@@ -217,7 +235,7 @@ async def delete_document(doc_id: str):
     return {"removed": doc_id, "chunks_deleted": n}
 
 
-@router.post("/ingest/sync")
+@router.post("/ingest/sync", dependencies=[Depends(require_admin_key)])
 async def ingest_sync():
     """重新扫描 corpus 目录（增量）：政策文件更新后的一键热更新入口。"""
     ctx = get_app_state()
