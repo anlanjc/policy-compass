@@ -163,6 +163,13 @@ class IndexStore:
         pieces = split_policy_text(content, meta.title)
         if not pieces:
             return
+        # embed 输入口径（2026-11-06 如实化注释，行为零变更）：
+        # splitter._pack 构造 Chunk 时从不赋值 title（恒为默认 ""），故本行的
+        # f"{c.title}\n{c.text}" 实际产出 "\n"+正文——标题经 text 首行《标题》进入，
+        # 功能无损；全库既有向量（含 FORCE_MOCK 哈希向量）均按此口径计算，
+        # 冻结评测数字以其为前提。若要改为纯 c.text（消除冗余换行前缀），
+        # 会同时改变哈希向量与真实向量 → 必须捆绑：全量重摄取 + v1/v2 mock/real
+        # 全量复测 + 冻结口径回填 + 简历数字同步（消融报告 ablation.md §2 有记录）。
         vectors = embed_fn([f"{c.title}\n{c.text}" for c in pieces])
         if hasattr(vectors, "__await__"):
             vectors = await vectors
