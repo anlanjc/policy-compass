@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..config import settings
 from ..ingestion.indexer import IndexStore, IndexedChunk
@@ -24,7 +26,14 @@ from ..llm.stats import stats
 from .bm25 import BM25Index, tokenize, tokenize_words
 from .rerank import Reranker
 
+if TYPE_CHECKING:
+    from ..ingestion.indexer import IndexSnapshot
+
 logger = logging.getLogger(__name__)
+
+# 当前检索的快照上下文（S3 评审 PC-2）：search 入口捕获，经 asyncio 上下文
+# 传给向量路协程——并发检索各用各的快照，互不串版本
+_search_snap: ContextVar["IndexSnapshot | None"] = ContextVar("search_snap", default=None)
 
 
 @dataclass
@@ -62,6 +71,7 @@ class HybridRetriever:
         self.reranker = Reranker()
         self._lex = self._load_lexicon()
         self._bm25: BM25Index | None = None
+        self._bm25_built_for = -1  # _bm25 构建时所基于的快照版本（PC-2）
         self.refresh()
 
     @staticmethod
@@ -74,6 +84,20 @@ class HybridRetriever:
     def refresh(self) -> None:
         """索引变更后重建 BM25（向量矩阵由 IndexStore 内存缓存维护）。"""
         self._bm25 = BM25Index([c.text for c in self.store.chunks])
+        self._bm25_built_for = self.store.snapshot.version
+
+    def _bm25_for(self, snap: IndexSnapshot) -> BM25Index | None:
+        """取与快照同版本的 BM25 索引（PC-2）：库变更后首次检索自动按该快照重建。
+
+        `self._bm25 = None`（消融打补丁禁用 BM25）语义保持：显式 None 视为禁用，
+        不自动重建；refresh() 恢复并重新盖章版本。
+        """
+        if self._bm25 is None:
+            return None
+        if self._bm25_built_for != snap.version:
+            self._bm25 = BM25Index([c.text for c in snap.chunks])
+            self._bm25_built_for = snap.version
+        return self._bm25
 
     # ---------- 查询扩展 ----------
 
@@ -116,14 +140,21 @@ class HybridRetriever:
         weighted, expanded = self.expand_query(query)
         result.expanded_terms = expanded
 
-        bm25_task = asyncio.get_running_loop().run_in_executor(
-            None, lambda: self._bm25.search_weighted(weighted, settings.top_k_recall)
-            if self._bm25 else []
-        )
-        vec_task = asyncio.ensure_future(self._vector_search(query, settings.top_k_recall))
-        bm25_hits, vec_hits = await asyncio.gather(bm25_task, vec_task)
+        # 快照捕获（PC-2）：本请求全程只用这一个自洽版本——库中途变更不影响在飞请求
+        snap = self.store.snapshot
+        token = _search_snap.set(snap)
+        try:
+            bm25 = self._bm25_for(snap)
+            bm25_task = asyncio.get_running_loop().run_in_executor(
+                None, lambda: bm25.search_weighted(weighted, settings.top_k_recall)
+                if bm25 else []
+            )
+            vec_task = asyncio.ensure_future(self._vector_search(query, settings.top_k_recall))
+            bm25_hits, vec_hits = await asyncio.gather(bm25_task, vec_task)
 
-        fused = self._rrf_fuse(query, bm25_hits, vec_hits, city, domain)
+            fused = self._rrf_fuse(snap.chunks, query, bm25_hits, vec_hits, city, domain)
+        finally:
+            _search_snap.reset(token)
         candidates = fused[: max(top_k * 3, 12)]
 
         if use_rerank and self.reranker.enabled and candidates:
@@ -154,7 +185,10 @@ class HybridRetriever:
         from ..llm.client import get_llm  # 局部导入避免循环依赖
 
         llm = get_llm()
-        matrix = self.store.matrix
+        # 快照（PC-2）：优先取 search 入口经 ContextVar 传入的版本；
+        # 直接调用（旧测试/脚本路径）回退当前快照——仍是同版本自洽对象
+        snap = _search_snap.get() or self.store.snapshot
+        chunks, matrix = snap.chunks, snap.matrix
         if matrix.size == 0:
             return []
         vec = (await llm.embed([query]))[0]
@@ -172,6 +206,7 @@ class HybridRetriever:
 
     def _rrf_fuse(
         self,
+        chunks: tuple[IndexedChunk, ...],
         query: str,
         bm25_hits: list,
         vec_hits: list[tuple[int, float]],
@@ -183,7 +218,7 @@ class HybridRetriever:
 
         def ensure(idx: int) -> ScoredChunk:
             if idx not in fused:
-                fused[idx] = ScoredChunk(chunk=self.store.chunks[idx], fused_score=0.0)
+                fused[idx] = ScoredChunk(chunk=chunks[idx], fused_score=0.0)
             return fused[idx]
 
         for rank, hit in enumerate(bm25_hits, start=1):

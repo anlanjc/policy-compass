@@ -75,6 +75,21 @@ class SyncReport:
         }
 
 
+@dataclass(frozen=True)
+class IndexSnapshot:
+    """不可变检索快照（S3 评审 PC-2）：chunks 元组与矩阵**同版本原子发布**。
+
+    此前检索的三个引用（BM25 命中 / matrix / chunks）跨越 await 各自读取活属性，
+    上传/删除触发 load_cache 整体替换后，在飞请求会把旧下标映射到新 chunks——
+    越界 500，或界内静默命中位移后的错误 chunk（引用与正文张冠李戴）。
+    快照让在飞请求基于同一自洽版本算完；新请求自动取最新版。
+    """
+
+    version: int
+    chunks: tuple[IndexedChunk, ...]
+    matrix: np.ndarray
+
+
 class IndexStore:
     def __init__(self, db_path: str | None = None) -> None:
         self.db_path = str(Path(db_path or settings.db_path).resolve())
@@ -85,6 +100,8 @@ class IndexStore:
         self._create_tables()
         self._chunks: list[IndexedChunk] = []
         self._matrix: np.ndarray = np.zeros((0, 0))
+        self._snap_version = 0
+        self._snapshot = IndexSnapshot(0, (), self._matrix)
         self.load_cache()  # 构造即加载已有索引，避免"忘记 sync 导致空检索"
 
     # ---------- schema ----------
@@ -261,6 +278,15 @@ class IndexStore:
                 self._matrix = mat / norms
             else:
                 self._matrix = np.zeros((0, 1))
+            # 快照原子发布（S3 评审 PC-2）：单个属性赋值在 CPython 下原子，
+            # 在飞检索持有旧 Snapshot 不受影响，新请求取到最新版
+            self._snap_version += 1
+            self._snapshot = IndexSnapshot(self._snap_version, tuple(chunks), self._matrix)
+
+    @property
+    def snapshot(self) -> IndexSnapshot:
+        """当前检索快照（chunks 与 matrix 恒同版本）。"""
+        return self._snapshot
 
     @property
     def chunks(self) -> list[IndexedChunk]:

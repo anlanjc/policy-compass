@@ -114,3 +114,58 @@ async def test_hybrid_city_boost_and_real_corpus(components):
     # 整串短语此前在 search_weighted 的 df 查找中静默失效，token 化才是真扩展）
     r3 = await retriever.search("跳槽了公积金怎么带走", use_rerank=False)
     assert "转移" in r3.expanded_terms and "接续" in r3.expanded_terms
+
+
+# ---------- S3 评审 PC-2 回归：检索与库变更的快照一致性 ----------
+
+async def test_search_snapshot_consistent_across_store_swap(components, monkeypatch):
+    """检索中途删库（快照整体替换）不得混用新旧索引。
+
+    复现原缺陷：在飞请求旧 matrix 命中下标 i，融合时读新 chunks——越界 500，
+    或界内静默命中位移后的错误 chunk（引用与正文张冠李戴）。
+    修法=入口捕获不可变 IndexSnapshot，BM25/向量/融合全程同版本。
+    """
+    store = components["store"]
+    retriever = components["retriever"]
+
+    old_snap = store.snapshot
+    assert len(old_snap.chunks) >= 3
+    victim = old_snap.chunks[len(old_snap.chunks) // 2]  # 排序居中的块（删后下标位移）
+    victim_idx = old_snap.chunks.index(victim)
+    victim_vec = [float(x) for x in old_snap.matrix[victim_idx]]
+
+    from app.llm import client as llm_client
+
+    swapped = {"v": False}
+
+    class SwapOnEmbedLLM:  # 只需 embed：查询向量计算前删库，返回精确命中旧快照行
+        async def embed(self, texts):
+            if not swapped["v"]:
+                swapped["v"] = True
+                store.remove_doc(victim.doc_id)
+            return [victim_vec]
+
+    monkeypatch.setattr(llm_client, "get_llm", lambda: SwapOnEmbedLLM())
+
+    r = await retriever.search(victim.text[:60], top_k=5, use_rerank=False)
+
+    assert store.snapshot.version != old_snap.version  # 库确实已换版
+    assert r.chunks, "检索应有结果"
+    # 关键断言：top1 是删库前的那个块（旧快照自洽），而非新库中位移后的顶替者
+    assert r.chunks[0].chunk.chunk_id == victim.chunk_id
+    assert r.chunks[0].chunk.text == victim.text
+
+
+def test_snapshot_version_increments_and_dims_consistent(components):
+    """快照不变量：chunks 数与矩阵行数恒一致；任何库变更推进版本号。"""
+    store = components["store"]
+    s1 = store.snapshot
+    assert s1.version >= 1 and len(s1.chunks) == s1.matrix.shape[0]
+    victim = s1.chunks[0]
+    expected_after = len([c for c in s1.chunks if c.doc_id != victim.doc_id])
+    store.remove_doc(victim.doc_id)  # doc 级联删除，可能去掉多个 chunk
+    s2 = store.snapshot
+    assert s2.version == s1.version + 1
+    assert len(s2.chunks) == s2.matrix.shape[0] == expected_after
+    # 旧快照不可变：不受新变更影响
+    assert len(s1.chunks) == s1.matrix.shape[0]
