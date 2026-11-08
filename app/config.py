@@ -11,6 +11,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -86,10 +87,24 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     # 知识库写接口（上传/删除/重摄取）管理密钥：未配置 = 写接口整体禁用（403），
-    # 公网部署防投毒/清空（S3 评审 PC-3）；配置后写请求须带 X-Admin-Key 头
-    admin_key: str = ""
+    # 公网部署防投毒/清空（S3 评审 PC-3）；配置后写请求须带 X-Admin-Key 头。
+    # 别名双收：DEPLOY.md 历史文档名与本仓无 env_prefix 的裸名都认（演示车道 2026-11-09
+    # 实测发现文档名 POLICY_COMPASS_ADMIN_KEY 原本不生效）。
+    # mock 强制闸（CI eval-gate 的 POLICY_COMPASS_FORCE_MOCK=1 此前是死变量：
+    # 无此字段时靠"无 key→auto→mock"兜底；显式成字段防 CI 环境混入 key 后 mock 静默消失）
+    force_mock: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("POLICY_COMPASS_FORCE_MOCK", "FORCE_MOCK"),
+    )
+    admin_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ADMIN_KEY", "POLICY_COMPASS_ADMIN_KEY"),
+    )
     # 跨域白名单（浏览器跨域演示才需要；默认空 = 仅同源，CORS 不放 *）
-    cors_origins: list[str] = []
+    cors_origins: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("CORS_ORIGINS", "POLICY_COMPASS_CORS_ORIGINS"),
+    )
 
     # 支持的城市与领域（路由与元数据过滤的词表）
     cities: list[str] = ["杭州", "上海", "北京", "深圳", "广州", "成都", "全国"]
@@ -97,6 +112,8 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_mode(self) -> str:
+        if self.force_mock:
+            return "mock"
         if self.llm_mode in ("mock", "real"):
             return self.llm_mode
         return "real" if self.llm_api_key else "mock"
