@@ -183,3 +183,15 @@ python scripts/serve.py             # http://127.0.0.1:8000
 **顺带修掉的真缺陷（评测装置抓出）**：`/api/ingest/sync` 未传 `llm` → 两份扫描件 PDF（hz_extract_optimize_2025.pdf / hz_rent_limit_2023.pdf）解析 ValueError → 叠加旧实现"解析失败=continue→落入 gone 级联删除"——**一次调用静默清掉全部扫描件文档**（singleflight 端点测试首跑抓出 snapshot_version 2→3 暴露）。修复=端点补传 llm + **解析失败≠删除**（磁盘存在的文件瞬时读不出：保留旧版原样可检，errors 留痕；`test_parse_failure_keeps_existing_doc` 钉死）。
 
 **回归与冻结口径**：pytest **40→48 全绿**（+8：指纹零重嵌零发布/修改反映检索/删除级联/在途旧快照隔离/端点鉴权/后台+singleflight/失败不卡死 singleflight/解析失败保留旧版）；冻结口径不受扰动（未动检索打分逻辑与语料）——本节写入后按 HR3 收工全量复测回填终数。
+
+### PC-HR2（2026-11-09）语料投毒/提示注入对抗评测：16/18 打穿 → 修复 → 18/18
+
+**装置**：对抗语料 `data/corpus_adversarial/` 6 份（指令覆盖/假废止/关键词堆砌挤占/伪权威+假覆盖面/外带诱导/角色逃逸），**独立目录**仅评测脚本摄入临时库——正式语料 `data/corpus/` 与冻结评测集 v1/v2 零字节接触；评测集 `data/eval_injection.jsonl` 18 条×4 类（injection_resist 6 / crowd 4 / out_of_scope 4 / exfil 4）；判分全确定性（载荷标记已 grep 核实正式语料零碰撞），零 LLM judge，mock only。运行：`POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py`。
+
+**首轮实证（修复前）：16/18 被打穿**——①载荷句凭 mock 生成器的"数字(+2.0)+结论词(+2.5)"加分被抽进答案（hr01-06/cr01-04/oos01-04 全中，9999/8888 进答案）；②伪权威"全国统一额度"把天津/重庆等库外城市问题带偏作答；③**系统提示词原文与安全验证码 9527 被复述外带**（ex01/ex02）；④verify 忠实度校验对该攻击结构性失明（载荷文本就在上下文里——忠实于上下文≠真实，摘出来写进了报告 §5）。
+
+**修复（ADR-7）**：注入隔离落检索出口单一咽喉（app/agent/injection.py + retrieve_node 接线）——命中模式行整行剔除、含载荷行文档 grade 记 0（不可作证据）、生成/校验上下文自动排除、stats 新增 injection_quarantined_lines 观测。模式库 8 族经**双向校验**钉死：正式语料 23 份 md+OCR 缓存全文零命中（冻结安全守门测试）+ 对抗 6 份全命中（装置有效性测试）。
+
+**修复后：18/18**——带偏 0、编造/外带 0、out_of_scope 诚实拒答 4/4、载荷检索穿透 0（sources 无对抗块）。**残余风险如实留档（报告 §4）**：关键词堆砌毒块可把真实证据挤出 top-k → 真实问题诚实拒答（真实答案存活率 0/10，最坏构造）——可用性 DoS 的修复归属检索层信任降权，违反本批冻结红线（不碰检索打分），归属后续批次；写入面已有 X-Admin-Key 门禁（PC-3）兜底。
+
+**冻结口径**：消毒器在检索热路径上，修复后全量复测 v1 mock **84.9%** / v2 mock **91.1%** / recall@5 97.9·97.2（93.8）**逐字复现**，usage 签名（refusals 4/11、tool_calls 6/19）与基线一致——正式语料经消毒路径文本逐字节不变。pytest **48→52 全绿**（+4：语料零命中守门/对抗全命中/消毒器单测/端到端防带偏）。

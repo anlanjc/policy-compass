@@ -31,6 +31,7 @@ class Stats:
     queries_total: int = 0
     refusals: int = 0  # 走到诚实拒答分支的次数
     tool_calls: int = 0
+    injection_quarantined_lines: int = 0  # 注入隔离剔除的行数（PC-HR2）
 
     _lock = threading.Lock()
 

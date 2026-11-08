@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..llm.client import LLMError, StructuredOutputError
 from ..llm.stats import stats
+from .injection import sanitize_text
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -80,8 +81,21 @@ def make_nodes(retriever, llm):
             use_rerank=True,
         )
         documents = []
+        quarantined_lines = 0
+        flagged_docs = 0
         for sc in r.chunks:
             c = sc.chunk
+            # 注入隔离（PC-HR2）：检索出口单一咽喉。命中注入模式的行剔除、
+            # 含载荷行的文档整体标记——grade 记 0、生成/校验上下文排除。
+            # 正式语料零命中（模式库双向校验钉死），文本逐字节不变。
+            text, n_flag = sanitize_text(c.text)
+            if n_flag:
+                quarantined_lines += n_flag
+                flagged_docs += 1
+                logger.warning(
+                    "注入隔离：chunk=%s 剔除 %d 行（模式命中，详见 app/agent/injection.py）",
+                    c.chunk_id, n_flag,
+                )
             documents.append(
                 {
                     "chunk_id": c.chunk_id,
@@ -94,10 +108,13 @@ def make_nodes(retriever, llm):
                     "sections": c.sections,
                     "pages": c.pages,
                     "is_valid": c.is_valid,
-                    "text": c.text,
+                    "text": text,
                     "retrieval_score": round(sc.final_score, 5),
+                    "injection_flagged": n_flag,
                 }
             )
+        if quarantined_lines:
+            stats.incr("injection_quarantined_lines", quarantined_lines)
         return {
             "documents": documents,
             "expanded_terms": r.expanded_terms,
@@ -112,6 +129,7 @@ def make_nodes(retriever, llm):
                     rerank_used=r.rerank_used,
                     latency_ms=r.latency_ms,
                     total_ms=round((time.perf_counter() - t0) * 1000, 1),
+                    injection_quarantined=quarantined_lines,
                 )
             ],
         }
@@ -120,6 +138,12 @@ def make_nodes(retriever, llm):
         docs = state["documents"][: settings.top_k_final]
 
         async def grade_one(doc: dict) -> float:
+            if doc.get("injection_flagged"):
+                # 注入隔离（PC-HR2）：含载荷行的文档不可作为证据参与 CRAG 决策——
+                # 记 0 分走改写/拒答路径，生成与校验上下文经 >=0.4 过滤自然排除
+                doc["grade"] = 0.0
+                doc["grade_reason"] = "含疑似注入指令内容，已隔离不可作证据"
+                return 0.0
             try:
                 async with asyncio.timeout(8):
                     g = await llm.chat_json(
@@ -246,9 +270,11 @@ def make_nodes(retriever, llm):
 
     def build_generation_messages(state: AgentState) -> list[dict]:
         """组装生成 prompt（图内生成与 API 流式生成共用，保证行为一致）。"""
-        docs = [d for d in state["documents"] if d.get("grade") is None or d["grade"] >= 0.4][
-            : settings.top_k_final
-        ]
+        docs = [
+            d for d in state["documents"]
+            if (d.get("grade") is None or d["grade"] >= 0.4)
+            and not d.get("injection_flagged")  # PC-HR2：隔离文档不进生成上下文
+        ][: settings.top_k_final]
         ctx_lines = []
         for i, d in enumerate(docs, start=1):
             meta = f"（{d['city']}·{d['domain']}·{d['doc_no']}·生效{d['effective_date']}·"
@@ -326,9 +352,11 @@ def make_nodes(retriever, llm):
     async def verify_node(state: AgentState) -> dict:
         t0 = time.perf_counter()
         msgs, _ = build_generation_messages(state)
-        docs = [d for d in state["documents"] if d.get("grade") is None or d["grade"] >= 0.4][
-            : settings.top_k_final
-        ]
+        docs = [
+            d for d in state["documents"]
+            if (d.get("grade") is None or d["grade"] >= 0.4)
+            and not d.get("injection_flagged")  # PC-HR2：与生成上下文同口径
+        ][: settings.top_k_final]
         ctx = "\n".join(f"[{i}] {d['text'][:600]}" for i, d in enumerate(docs, start=1))
         tool_ctx = ""
         if state.get("tool_result"):

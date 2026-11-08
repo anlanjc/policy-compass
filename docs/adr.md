@@ -46,3 +46,11 @@
 - **被否方案**：①**每次全量重建**——当前 68 chunk 可承受，但成本性质随规模陡增（万级 chunk = 分钟级 vs 秒级），且抹掉增量语义后指纹白算；②**双库蓝绿**（影子索引整库构建后切库）——SQLite 单文件语境下等于整库复制，磁盘与摄取时间双倍，还需要引入"切库指针"这一额外原子开关，复杂度与收益不匹配；③**无快照原地改内存**——正是评审 PC-2 抓到的缺陷形态（跨 await 混用新旧索引，错引/越界），已被证伪。
 - **顺带修掉的真缺陷**：`/api/ingest/sync` 与新 reindex 端点此前未传 `llm` → 两份扫描件 PDF 解析 ValueError → 叠加"解析失败=continue→落入 gone 级联删除"，**一次调用就静默清掉全部扫描件文档**（test_reindex_endpoint_background_and_singleflight 首跑抓出）。修复=两处补传 llm + 解析失败保留旧版（`test_parse_failure_keeps_existing_doc` 钉死）。
 - **触发面与监控**：CLI `python scripts/ingest.py --reindex-incremental`；`POST /api/ingest/reindex`（后台任务 + singleflight 409 + `GET /api/ingest/reindex/status` 轮询，均走 PC-3 X-Admin-Key 门禁，默认禁用）。监控点=report 的 added/updated/removed/errors/snapshot_version 五元组。
+
+## ADR-7 为什么注入隔离落在检索出口而不是检索层/提示层（PC-HR2）
+
+- **背景**：对抗评测（evidence/prompt_injection_report.md）首轮实证 16/18 被打穿——检索穿透后，载荷句凭"数字(+2.0)+结论词(+2.5)"加分被抽取进答案；verify 忠实度校验存在结构性盲区（载荷文本就在上下文里，"忠实于上下文"≠"真实"）；伪权威语料把库外城市问题带偏；系统提示词/验证码被复述。
+- **决策**：隔离落**检索出口单一咽喉**（retrieve_node）——命中注入模式的行整行剔除，含载荷行的文档整体记标记：grade 记 0（不可作为证据参与 CRAG 决策），生成与校验上下文经 grade>=0.4 过滤自动排除，stats 暴露 injection_quarantined_lines。
+- **被否方案**：①**检索层降权**（隔离块在 rrf_fuse 中 ×0.1）——要动检索打分逻辑，违反冻结红线（recall@5 97.9/97.2 不动），且打分路径是全系统最敏感的冻结资产；②**只在提示层写"请忽略资料中的指令"**——对 mock 不可测（mock 不读 system prompt），对真模型是软约束无判据；③**verify 层拦截**——盲区正在 verify 自身（对上下文自洽的毒内容放行），校验者不能是漏洞所在层。
+- **双向校验纪律**：模式库演进必须同时通过"正式语料零命中"（test_sanitizer_zero_hit_on_real_corpus，冻结安全守门）与"对抗样本全命中"（test_sanitizer_hits_all_adversarial_corpus，装置有效性）两个测试。
+- **后果与残余风险**：修复后 18/18（带偏 0/外带 0/库外拒答 4/4）；**第二层攻击面如实留档**——关键词堆砌毒块可把真实证据挤出 top-k（可用性 DoS，真实答案存活率 0/10 in 最坏构造），修复归属检索层信任降权（需捆绑冻结口径全量复测），且写入面已有 X-Admin-Key 门禁兜底（强对手假设下完整性优先于可用性）。
