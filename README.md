@@ -4,7 +4,7 @@
 >
 > 站在 [Datawhale《All in RAG》](https://github.com/datawhalechina/all-in-rag) 教程"四步构建 RAG"之上的业务化演进：教程教 RAG 基础，本项目补上教程尚未覆盖的 **Agentic RAG** 专题，并以政策问答这一强约束场景做深。
 
-[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-52%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量腿已真模型复验-生产维持BM25·结论留档-blue)]()
+[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-57%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量腿已真模型复验-生产维持BM25·结论留档-blue)]()
 
 ## 架构总览
 
@@ -107,7 +107,7 @@ python scripts/chat.py "我杭州公积金余额4万缴了5年月薪2万，最�
 
 ```bash
 python scripts/eval.py            # 检索指标 + 消融 + 端到端，产出 docs/eval_report.md
-python -m pytest tests/ -q        # 52 项测试（mock 模式，零 API key 可跑 CI）
+python -m pytest tests/ -q        # 57 项测试（mock 模式，零 API key 可跑 CI）
 ```
 
 **评测分层口径**：v1 33 条 = smoke 回归集（定位声明：回归集不是 benchmark）；v2 90 条 = full 分层集（事实 25/对比 15/计算 15/拒答 12/时效 8/黑话 8/多跳 7，其中 15 条 holdout 永不参与调参、报告单列）。所有百分比来自实际 runner 输出，mock 与 real 分开标注，完整证据链（消融/故障注入/压测/失败归因/复现命令）见 [EVIDENCE.md](EVIDENCE.md)。
@@ -154,6 +154,8 @@ python -m pytest tests/ -q        # 52 项测试（mock 模式，零 API key 可
 
 **对抗鲁棒性（PC-HR2）**：`POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py`——6 份对抗语料（`data/corpus_adversarial/` 独立目录，不进正式库）×18 题确定性判分（不被注入带偏 / 零编造零外带 / CRAG 行为符合设计），报告 `evidence/prompt_injection_report.md`；注入隔离机制与残余风险见 ADR-7。
 
+**引用 faithfulness（PC-HR3）**：`POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_faithfulness.py`——实体级校验器（文号/条款/数量原子回查引用块原文+条款元数据+工具结果），20 条子集校准 + v1/v2 全量，报告 `evidence/faithfulness_report.md`。
+
 ## 设计取舍 FAQ
 
 **为什么 SQLite + numpy 而不是 Milvus/Chroma？**
@@ -194,7 +196,7 @@ policy-compass/
 ├── static/index.html # 演示前端（打字机 + trace 面板）
 ├── scripts/          # serve / ingest / eval / chat / fault_inject / load_test
 ├── evidence/         # 证据链归档（评测报告/故障注入/压测/失败归因/git log）
-└── tests/            # 52 项 pytest
+└── tests/            # 57 项 pytest
 ```
 
 > 语料声明：`data/corpus` 中 **16 份为真实政策文件（覆盖 7 城市+全国）**——北京租赁提取〔2023〕6号 / 北京直付房租〔2025〕1号 / 北京贷款〔2018〕51号 / 上海租赁提取沪公积金管委会〔2024〕6号 / 上海贷款沪公积金管委会〔2026〕1号（官方站不可达，双源权威转载交叉核对）/ 广州穗公积金中心规字〔2024〕2号 / 深圳提取管理规定深公积金规〔2025〕3号 / 成都 2026 租房提取调整（人民网转载）/ 杭州贷款杭房公委〔2026〕1号（杭州市政府公报）/ 《住房公积金管理条例》2026 第三次修订（国家行政法规库）/ 《社会保险法》条文节选（主席令第35号，国家信访局全文页）/ 国办发〔2019〕13号《降低社会保险费率综合方案》（人社法规库转载）/ 沪府规〔2025〕8号居转户办法要点 / 央行《关于下调个人住房公积金贷款利率的通知》（2025-05-08 起，法规库转载）/ 杭州租赁提取 2 份红头扫描件 PDF（视觉 OCR 摄取）。**每份文件头部注明来源 URL 与抓取时间**；成都官方站反爬无法直抓，采用人民网/成都日报权威转载并标注。其余 **7 份**仍为按真实结构编写的演示数据（头部有【演示语料】声明，仅用于教学演示），相关官方文件发布后按同流程替换。工具限额表（`app/agent/tools.py` RENT_LIMITS/LOAN_RULES）与评测金标已对齐真实数字，来源以注释形式标注到文号。
