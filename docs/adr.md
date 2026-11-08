@@ -36,3 +36,13 @@
 - **决策**：pypdf 稀疏检测 → qwen3-vl-plus 视觉转录 → 哈希缓存（data/ocr_cache 可离线复现评测）。
 - **备选与放弃**：①Tesseract——中文红头文件效果差；②外部 OCR API——多一个供应商依赖；③人工录入——不可扩展、不可复现。
 - **后果**：转录质量决定检索上限——OCR 短行过滤（文号行 <20 字符）踩过坑（jieba 跨上下文切分不一致 + 短行被丢），修复后缓存使评测可离线复现。
+
+## ADR-6 为什么热更新是"doc 级增量 patch + 快照原子发布"（PC-HR1）
+
+- **背景**：政策语料会修订（额度调整/文件废止/新文发布），知识库必须不中断服务完成热更新——面经十连问的"RAG 知识库热更新怎么做？文档变了索引怎么同步？"
+- **决策（分两层）**：
+  - **数据层：doc 级增量 patch**——文件内容 sha256 指纹三态：未变跳过（零重嵌入零重建）、变更重切重嵌、删除级联清库；磁盘存在但解析失败的文档**保留旧版**并记入 report.errors（瞬时 IO 抖动/缺视觉模型不丢数据）。
+  - **服务层：构建期不发布，完成才原子切换**——增量写库期间内存快照保持旧版，构建完成 `load_cache` 一次性发布新快照（复用 S3 评审 PC-2 的 IndexSnapshot 机制）；在途请求拿旧快照跑完，新请求自动取新版本。**零变更不发布**：版本号稳定，BM25 免重建（`_bm25_for` 按版本懒重建逻辑不受扰动）。
+- **被否方案**：①**每次全量重建**——当前 68 chunk 可承受，但成本性质随规模陡增（万级 chunk = 分钟级 vs 秒级），且抹掉增量语义后指纹白算；②**双库蓝绿**（影子索引整库构建后切库）——SQLite 单文件语境下等于整库复制，磁盘与摄取时间双倍，还需要引入"切库指针"这一额外原子开关，复杂度与收益不匹配；③**无快照原地改内存**——正是评审 PC-2 抓到的缺陷形态（跨 await 混用新旧索引，错引/越界），已被证伪。
+- **顺带修掉的真缺陷**：`/api/ingest/sync` 与新 reindex 端点此前未传 `llm` → 两份扫描件 PDF 解析 ValueError → 叠加"解析失败=continue→落入 gone 级联删除"，**一次调用就静默清掉全部扫描件文档**（test_reindex_endpoint_background_and_singleflight 首跑抓出）。修复=两处补传 llm + 解析失败保留旧版（`test_parse_failure_keeps_existing_doc` 钉死）。
+- **触发面与监控**：CLI `python scripts/ingest.py --reindex-incremental`；`POST /api/ingest/reindex`（后台任务 + singleflight 409 + `GET /api/ingest/reindex/status` 轮询，均走 PC-3 X-Admin-Key 门禁，默认禁用）。监控点=report 的 added/updated/removed/errors/snapshot_version 五元组。

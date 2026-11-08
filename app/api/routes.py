@@ -16,11 +16,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import time
 import uuid
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
-import secrets
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -104,7 +104,7 @@ async def _run_stream(ctx, req: ChatRequest) -> AsyncIterator[str]:
         for ev in graded.get("events", []):
             yield trace(ev)
 
-        from ..agent.graph import _after_grade, _after_verify  # 复用条件边逻辑
+        from ..agent.graph import _after_grade  # 复用条件边逻辑
 
         decision = _after_grade(state)
         rewrite_round = 0
@@ -268,9 +268,56 @@ async def delete_document(doc_id: str):
 async def ingest_sync():
     """重新扫描 corpus 目录（增量）：政策文件更新后的一键热更新入口。"""
     ctx = get_app_state()
-    report = await ctx["store"].sync(None, ctx["llm"].embed)
+    # llm 必须传（PC-HR1 修复）：扫描件 PDF 靠视觉模型转录，缺 llm 时解析失败——
+    # 旧实现叠加"解析失败=删除"的级联，一次调用就会静默清掉全部扫描件文档
+    report = await ctx["store"].sync(None, ctx["llm"].embed, llm=ctx["llm"])
     ctx["retriever"].refresh()
     return report.as_dict()
+
+
+# ---------- 知识库热更新 2.0（PC-HR1）：后台构建 + 快照原子切换 ----------
+#
+# 与 /api/ingest/sync（内联，等扫完才返回）互补：reindex 把扫描/重嵌放进后台任务，
+# 请求立即返回；构建期间服务照常答题（在途与新增请求全部走旧快照），构建完成
+# load_cache 一次性原子发布新快照（PC-2 机制），下一个请求自动切到新版本。
+# singleflight：检查与置位之间无 await，事件循环下天然互斥，重复触发返回 409。
+
+_reindex_job: dict = {"running": False, "last_report": None, "error": None, "task": None}
+
+
+@router.post("/ingest/reindex", status_code=202, dependencies=[Depends(require_admin_key)])
+async def reindex_start():
+    """后台增量重建索引：立即返回 202（携带当前快照版本），不阻塞问答链路。"""
+    ctx = get_app_state()
+    if _reindex_job["running"]:
+        raise HTTPException(409, "已有索引重建任务进行中，请稍后查询 /api/ingest/reindex/status")
+    _reindex_job.update({"running": True, "last_report": None, "error": None})
+
+    async def _run():
+        try:
+            report = await ctx["store"].sync(None, ctx["llm"].embed, llm=ctx["llm"])
+            ctx["retriever"].refresh()
+            _reindex_job["last_report"] = report.as_dict()
+        except Exception:  # PC-9 同款：异常明文不外发，详情仅进服务端日志
+            logger.exception("后台索引重建失败")
+            _reindex_job["error"] = "索引重建失败，详情见服务端日志"
+        finally:
+            _reindex_job["running"] = False
+
+    _reindex_job["task"] = asyncio.create_task(_run())
+    return {"status": "started", "snapshot_version": ctx["store"].snapshot.version}
+
+
+@router.get("/ingest/reindex/status", dependencies=[Depends(require_admin_key)])
+async def reindex_status():
+    """重建任务状态：running / 上次报告 / 错误 / 当前快照版本（轮询用）。"""
+    ctx = get_app_state()
+    return {
+        "running": _reindex_job["running"],
+        "last_report": _reindex_job["last_report"],
+        "error": _reindex_job["error"],
+        "snapshot_version": ctx["store"].snapshot.version,
+    }
 
 
 # ---------- 运维 ----------

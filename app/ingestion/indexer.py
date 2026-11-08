@@ -19,17 +19,17 @@ import json
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
 from ..config import settings
 from .loader import list_corpus, load_file
 from .metadata import PolicyMeta, extract_metadata
-from .splitter import Chunk, split_policy_text
+from .splitter import split_policy_text
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,8 @@ class SyncReport:
     removed: list[str] = field(default_factory=list)
     skipped: int = 0
     total_chunks: int = 0
+    snapshot_version: int = 0  # 本次同步发布后的快照版本（索引版本化，PC-HR1）
+    errors: list[str] = field(default_factory=list)  # 存在但解析失败的文件（保留旧版，PC-HR1）
 
     def as_dict(self) -> dict:
         return {
@@ -72,6 +74,8 @@ class SyncReport:
             "removed": self.removed,
             "skipped": self.skipped,
             "total_chunks": self.total_chunks,
+            "snapshot_version": self.snapshot_version,
+            "errors": self.errors,
         }
 
 
@@ -154,6 +158,13 @@ class IndexStore:
                 try:
                     content = await load_file(path, llm=llm)
                 except ValueError as e:
+                    # 解析失败 ≠ 文件已删除（PC-HR1）：磁盘上的文件读不出内容可能是
+                    # 瞬时 IO 错误/缺视觉模型——旧实现直接 continue 会落入下面的
+                    # gone 级联删除，一次解析抖动就静默清掉该文档全部 chunk。
+                    # 改为：已入库的保留旧版原样可检，新文件仅记错误；均在报告 errors 留痕。
+                    if path.name in known:
+                        seen.add(path.name)
+                    report.errors.append(path.name)
                     logger.warning("跳过无法解析的文档 %s: %s", path.name, e)
                     continue
                 meta = extract_metadata(path.name, content)
@@ -171,8 +182,14 @@ class IndexStore:
                 self._delete_doc(gone)
                 report.removed.append(gone)
             self._conn.commit()
-        self.load_cache()
+            changed = bool(report.added or report.updated or report.removed)
+        if changed:
+            self.load_cache()
+        # 无变更时不发布新快照（PC-HR1）：版本号保持稳定，在途/新增请求继续用
+        # 同一版本，BM25 免重建；内存缓存本就与未变的 DB 一致。
+        # （仅当绕过 IndexStore 直接改库时会出现内存滞后——非受支持路径。）
         report.total_chunks = len(self._chunks)
+        report.snapshot_version = self._snap_version
         return report
 
     async def _ingest(self, meta: PolicyMeta, content: str, embed_fn: EmbedFn) -> None:

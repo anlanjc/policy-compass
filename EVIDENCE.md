@@ -175,3 +175,11 @@ python scripts/serve.py             # http://127.0.0.1:8000
 - 根因（时间线实证）：评测报告生成于 10-29 07:58，沪杭贷款语料真实化+金标修正的提交落在 **08:02 批次**，08:02 最终 HEAD **未复跑 v1/v2 mock 全量**（real 侧有受影响子集 22 条覆盖，mock 侧遗漏）；#3 答案引"账户余额倍数"旧表述，属金标/语料对齐 2026 文件的连带（与 #6 排序噪声同类）；
 - 与本特性无关的证明：chunk 逐字节一致 + HEAD 代码同库 A/B 同为 81.8%；
 - 处理选项（留主人定）：①按新口径回填 README/EVIDENCE/RESUME 的 mock 数字（v2 90.0%/v1 81.8%，real 冻结口径不动）；②逐条核对 #3/#127/#177/#179/#189 的金标与 杭房公委〔2026〕1号 等 2026 文件后修复重测。
+
+### PC-HR1（2026-11-09）检索索引热更新：增量摄取 + 快照原子切换 + 后台重建
+
+**特性**（对应面经"RAG 知识库热更新怎么做？文档变了索引怎么同步？"）：①文件内容 sha256 指纹三态增量本就存在（未变跳过/变更重切重嵌/删除级联），本批补齐**服务化闭环**——`POST /api/ingest/reindex` 后台任务（立即 202，singleflight 防叠跑 409）+ `GET /api/ingest/reindex/status` 进度轮询 + CLI `--reindex-incremental` 显式触发面，均走 PC-3 X-Admin-Key 门禁；②**索引版本化收口**：SyncReport 携带 snapshot_version；**零变更不发布新快照**（版本号稳定，BM25 免重建）；③构建完成 `load_cache` 一次性原子发布（PC-2 机制），在途请求旧快照跑完——新增 PC-2 同款回归作用于热更新路径（检索中途整库 sync，断言 top1 仍是旧库块，随后新请求取到新内容）。④**ADR-6**：doc 级增量 patch + 快照原子发布 vs 全量重建/双库蓝绿/无快照原地改（后者即 PC-2 缺陷形态）的取舍记录。
+
+**顺带修掉的真缺陷（评测装置抓出）**：`/api/ingest/sync` 未传 `llm` → 两份扫描件 PDF（hz_extract_optimize_2025.pdf / hz_rent_limit_2023.pdf）解析 ValueError → 叠加旧实现"解析失败=continue→落入 gone 级联删除"——**一次调用静默清掉全部扫描件文档**（singleflight 端点测试首跑抓出 snapshot_version 2→3 暴露）。修复=端点补传 llm + **解析失败≠删除**（磁盘存在的文件瞬时读不出：保留旧版原样可检，errors 留痕；`test_parse_failure_keeps_existing_doc` 钉死）。
+
+**回归与冻结口径**：pytest **40→48 全绿**（+8：指纹零重嵌零发布/修改反映检索/删除级联/在途旧快照隔离/端点鉴权/后台+singleflight/失败不卡死 singleflight/解析失败保留旧版）；冻结口径不受扰动（未动检索打分逻辑与语料）——本节写入后按 HR3 收工全量复测回填终数。

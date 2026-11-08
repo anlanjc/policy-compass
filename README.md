@@ -143,8 +143,14 @@ python -m pytest tests/ -q        # 29 项测试（mock 模式，零 API key 可
 | GET | `/api/documents` | 文档列表（含状态/文号/城市元数据） |
 | POST | `/api/documents` | 上传摄取（增量，自动重建索引） |
 | DELETE | `/api/documents/{id}` | 删除并级联清索引 |
-| POST | `/api/ingest/sync` | 重扫语料目录（政策热更新） |
+| POST | `/api/ingest/sync` | 重扫语料目录（政策热更新，内联等待完成） |
+| POST | `/api/ingest/reindex` | **后台**增量重建：立即 202 返回，singleflight 防叠跑（进行中 409） |
+| GET | `/api/ingest/reindex/status` | 重建进度轮询：running / 报告 / 当前快照版本 |
 | GET | `/api/health` · `/api/stats` | 健康 / 运行统计（token、重试、JSON 修复率、拒答数） |
+
+> 热更新机制（ADR-6）：文件 sha256 指纹三态增量（未变零重嵌/变更重嵌/删除级联），
+> 构建完成后一次性原子发布新快照——在途请求用旧快照跑完，新请求自动切新版本。
+> CLI 入口：`python scripts/ingest.py --reindex-incremental`；写接口均需 `X-Admin-Key`。
 
 ## 设计取舍 FAQ
 
