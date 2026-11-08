@@ -257,7 +257,10 @@ async def upload_document(body: DocumentUpload):
 @router.delete("/documents/{doc_id}", dependencies=[Depends(require_admin_key)])
 async def delete_document(doc_id: str):
     ctx = get_app_state()
-    n = ctx["store"].remove_doc(doc_id)
+    # PC-13：删除也走 write_lock —— 与后台 reindex/sync 并发时串行，
+    # 防止"删除落在 sync 的 await 窗口里，随后被其整篇重摄复活"。
+    async with ctx["store"].write_lock:
+        n = ctx["store"].remove_doc(doc_id)
     if n == 0 and not any(d["doc_id"] == doc_id for d in ctx["store"].list_docs()):
         raise HTTPException(404, f"文档不存在: {doc_id}")
     ctx["retriever"].refresh()

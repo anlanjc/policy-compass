@@ -338,3 +338,61 @@ async def test_reindex_error_does_not_stuck_singleflight(temp_env, monkeypatch):
                     break
                 await asyncio.sleep(0.01)
             assert st["running"] is False
+
+
+# ---------- 评审 3.0 PC-13：写路径 asyncio 串行化（RLock 非 await 感知残余） ----------
+
+
+async def test_concurrent_writers_serialized_no_lost_update(hr):
+    """reindex（后台 sync）与上传（add_document）并发写同一文档。
+
+    修复前：sync/add_document 持 threading.RLock 横跨 await —— RLock 同线程
+    可重入，对协程并发零互斥（PC-R1 已证）。A 的 embed 让出事件循环期间，B
+    完整跑完并返回成功（已确认写入），A 恢复后用自己的旧版本整篇覆盖 ——
+    B 的写丢失（lost update），返回值与最终状态矛盾。
+
+    修复后：写路径在 asyncio.Lock 上串行，后到写者最后落地，返回值与最终
+    状态一致；singleflight 从"防 reindex 自己"升级为"防所有写者"。
+    """
+    # ① 先入库 v1
+    path = hr.corpus / "doc_x.md"
+    _write_doc(path, "深圳市租赁提取办法甲", "v1 旧内容第二条款。")
+    await hr.store.sync(str(hr.corpus), hr.llm.embed)
+
+    # ② 磁盘文件改为 v2（A 的 sync 将重摄它；embed 故意让出事件循环）
+    _write_doc(path, "深圳市租赁提取办法甲", "v2 sync 重摄的第二条款，内容更长一些以改变指纹。")
+
+    a_embed_calls = {"n": 0}
+
+    async def slow_embed(texts):
+        a_embed_calls["n"] += len(texts)
+        await asyncio.sleep(0.05)  # 让出：给 B 完整跑完的窗口
+        return [[float((len(t) % 7) + 1)] * 8 for t in texts]
+
+    # ③ B：并发上传 v3（不同内容、不同块数）
+    v3_content = (
+        "# 深圳市租赁提取办法甲\n【发文字号】热更〔2026〕1号\n【生效日期】2026-01-01\n"
+        "【状态】现行有效\n【适用城市】深圳\n【领域】公积金\n\n"
+        "第一条 v3 上传版内容。\n第二条 追加条款以保证块数不同。\n"
+        "第三条 再追加一条确保 v3 分块数与 v2 不同。\n"
+    )
+
+    r_a, n_b = await asyncio.gather(
+        hr.store.sync(str(hr.corpus), slow_embed),
+        hr.store.add_document("doc_x.md", v3_content, hr.llm.embed),
+    )
+
+    # ④ 后到写者（B）最后落地：最终状态 == B 的已确认返回值
+    final_docs = hr.store._conn.execute(
+        "SELECT chunk_count FROM docs WHERE doc_id='doc_x.md'"
+    ).fetchone()
+    final_chunks = hr.store._conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE doc_id='doc_x.md'"
+    ).fetchone()[0]
+    assert n_b == final_docs[0] == final_chunks, (
+        f"B 已确认写入 {n_b} 块，最终状态 {final_docs[0]}/{final_chunks} —— 丢更新"
+    )
+    final_texts = " ".join(c.text for c in hr.store.snapshot.chunks
+                           if c.doc_id == "doc_x.md")
+    assert "v3 上传版内容" in final_texts, "最终内容应是后到写者 B 的 v3"
+    assert r_a.updated or r_a.added  # A 确实执行了重摄（非空跑）

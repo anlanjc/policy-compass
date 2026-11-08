@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -99,6 +100,13 @@ class IndexStore:
         self.db_path = str(Path(db_path or settings.db_path).resolve())
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # PC-13（评审 3.0）：写路径串行锁。_lock 是 threading.RLock——对协程并发
+        # 零互斥（同线程可重入，PC-R1 已证），而 sync/add_document 持它横跨
+        # await：后台 reindex 与 /ingest/sync、上传并发时，两个写协程在"临界区"
+        # 内交错（B 已确认的写入被 A 的旧版本整篇覆盖——丢更新；撕裂快照）。
+        # await 跨越的临界区必须用 asyncio.Lock。_lock 仍保留给纯同步段
+        # （建表/迁移/load_cache 快照发布）。
+        self.write_lock = asyncio.Lock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._create_tables()
@@ -145,44 +153,48 @@ class IndexStore:
 
     async def sync(self, corpus_dir: str | None = None, embed_fn: EmbedFn | None = None,
                    llm=None) -> SyncReport:
-        """增量同步语料目录。embed_fn 为异步函数；llm 用于扫描件 PDF 的 OCR 兜底。"""
+        """增量同步语料目录。embed_fn 为异步函数；llm 用于扫描件 PDF 的 OCR 兜底。
+
+        PC-13（评审 3.0）：全程持有 write_lock —— 后台 reindex 与 /ingest/sync
+        都走本方法，写协程之间在此串行（RLock 对协程零互斥，见 __init__ 注记）。"""
         report = SyncReport()
         embed_fn = embed_fn or self._dummy_embed
-        with self._lock:
-            known = {
-                row[0]: row[1]
-                for row in self._conn.execute("SELECT doc_id, file_hash FROM docs")
-            }
-            seen: set[str] = set()
-            for path in list_corpus(corpus_dir or settings.corpus_dir):
-                try:
-                    content = await load_file(path, llm=llm)
-                except ValueError as e:
-                    # 解析失败 ≠ 文件已删除（PC-HR1）：磁盘上的文件读不出内容可能是
-                    # 瞬时 IO 错误/缺视觉模型——旧实现直接 continue 会落入下面的
-                    # gone 级联删除，一次解析抖动就静默清掉该文档全部 chunk。
-                    # 改为：已入库的保留旧版原样可检，新文件仅记错误；均在报告 errors 留痕。
-                    if path.name in known:
-                        seen.add(path.name)
-                    report.errors.append(path.name)
-                    logger.warning("跳过无法解析的文档 %s: %s", path.name, e)
-                    continue
-                meta = extract_metadata(path.name, content)
-                seen.add(meta.doc_id)
-                old_hash = known.get(meta.doc_id)
-                if old_hash == meta.file_hash:
-                    report.skipped += 1
-                    continue
-                if old_hash is not None:
-                    report.updated.append(meta.doc_id)
-                else:
-                    report.added.append(meta.doc_id)
-                await self._ingest(meta, content, embed_fn)
-            for gone in set(known) - seen:
-                self._delete_doc(gone)
-                report.removed.append(gone)
-            self._conn.commit()
-            changed = bool(report.added or report.updated or report.removed)
+        async with self.write_lock:
+            with self._lock:
+                known = {
+                    row[0]: row[1]
+                    for row in self._conn.execute("SELECT doc_id, file_hash FROM docs")
+                }
+                seen: set[str] = set()
+                for path in list_corpus(corpus_dir or settings.corpus_dir):
+                    try:
+                        content = await load_file(path, llm=llm)
+                    except ValueError as e:
+                        # 解析失败 ≠ 文件已删除（PC-HR1）：磁盘上的文件读不出内容可能是
+                        # 瞬时 IO 错误/缺视觉模型——旧实现直接 continue 会落入下面的
+                        # gone 级联删除，一次解析抖动就静默清掉该文档全部 chunk。
+                        # 改为：已入库的保留旧版原样可检，新文件仅记错误；均在报告 errors 留痕。
+                        if path.name in known:
+                            seen.add(path.name)
+                        report.errors.append(path.name)
+                        logger.warning("跳过无法解析的文档 %s: %s", path.name, e)
+                        continue
+                    meta = extract_metadata(path.name, content)
+                    seen.add(meta.doc_id)
+                    old_hash = known.get(meta.doc_id)
+                    if old_hash == meta.file_hash:
+                        report.skipped += 1
+                        continue
+                    if old_hash is not None:
+                        report.updated.append(meta.doc_id)
+                    else:
+                        report.added.append(meta.doc_id)
+                    await self._ingest(meta, content, embed_fn)
+                for gone in set(known) - seen:
+                    self._delete_doc(gone)
+                    report.removed.append(gone)
+                self._conn.commit()
+                changed = bool(report.added or report.updated or report.removed)
         if changed:
             self.load_cache()
         # 无变更时不发布新快照（PC-HR1）：版本号保持稳定，在途/新增请求继续用
@@ -235,11 +247,15 @@ class IndexStore:
             )
 
     async def add_document(self, file_name: str, content: str, embed_fn: EmbedFn) -> int:
-        """API 上传入口：同步摄取单个文档，返回 chunk 数。"""
+        """API 上传入口：同步摄取单个文档，返回 chunk 数。
+
+        PC-13：与 sync/reindex 共用 write_lock —— 上传与后台重建并发时串行，
+        后到写者最后落地（返回值与最终状态一致）。"""
         meta = extract_metadata(file_name, content)
-        with self._lock:
-            await self._ingest(meta, content, embed_fn)
-            self._conn.commit()
+        async with self.write_lock:
+            with self._lock:
+                await self._ingest(meta, content, embed_fn)
+                self._conn.commit()
         self.load_cache()
         return len([c for c in self._chunks if c.doc_id == meta.doc_id])
 
