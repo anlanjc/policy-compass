@@ -33,6 +33,16 @@ flowchart LR
 
 > 前端采用**「政务文书」设计语言**（纸面浅色 / 藏蓝 + 朱红 / 衬线标题 / 印章标识 / 文号徽章引用卡）——与目标用户（查政策的市民）和语料形态（红头文件）一致，也与 askbi 的暗色数据大屏形成两个真实产品的差异化。左侧「决策路径」面板由 SSE 全链路实时推送逐节点留痕（路由→检索→评分→黑话改写→工具调用→生成→忠实度校验）；每条引用自带文号徽章 + 生效日期 + 条款号 + 现行/废止标注，可溯源到政策原文。部署手册见 [DEPLOY.md](DEPLOY.md)。
 
+### 工程实证三帧（2026-11-09 真渲染）
+
+| 帧 | 看什么 | 缩略图 |
+|---|---|---|
+| 检索索引热更新（PC-HR1） | 对本机 8765 实例的真实 API 序列：401 门禁（PC-3 X-Admin-Key）→ 写路径逐次发布 v1→v25 → `POST /api/ingest/reindex` 202 后台重建 → 4 路并发 3×202+1×409 singleflight → 轮询 SyncReport（24 份变更探针级联删除、快照原子切换 v26）→ 零变更复跑版本稳定（BM25 免重建）→ 库复原 23 docs/68 chunks | <img src="docs/screenshots/05_hotreload_reindex.png" width="420"> |
+| 注入对抗对照（PC-HR2） | 修复前 16/18 打穿 vs 修复后 18/18 三大数对照 + EVIDENCE/ADR-7 逐字引文 + 对抗语料载荷行原文（adv01_override / adv03_keyword_stuff / adv05_exfil）+ 报告 §3 十八条逐条判定原表 + 残余风险如实留档 | <img src="docs/screenshots/06_injection_compare.png" width="420"> |
+| 引用 faithfulness（PC-HR3） | v1 277/277 与 v2 599/599 双 100.0% + 归因三分类（生成幻觉/引用错块/校验器误报，全量 0）+ 20 条人工校准子集原表（含拒答回显文号 14 条误报的口径修复记录）+ 诚实边界 | <img src="docs/screenshots/07_faithfulness.png" width="420"> |
+
+> 三帧均为**真实渲染、无摆拍**：帧1 数据来自本机 mock 口径实例（APP_PORT=8765）实跑捕获的 API 时间线；帧2/帧3 数据逐字提取自 [evidence/prompt_injection_report.md](evidence/prompt_injection_report.md) 与 [evidence/faithfulness_report.md](evidence/faithfulness_report.md)（diff 校验一致）。证据页经本地静态服务渲染后由浏览器自动化等 DOM 终态截帧（1366×900，与 agentgate 五帧同规格），演示装置不入仓；全程 mock 零 API 花费。
+
 ## 为什么是"政策问答"而不是又一个知识库 Demo
 
 通用 RAG demo 的通病是**技术悬空**——没有任何业务约束强迫你做对什么。政策问答的每个技术设计都被业务事实逼出来：
