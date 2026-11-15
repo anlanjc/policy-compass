@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import settings
+from ..llm.client import LLMError
 from .loader import list_corpus, load_file
 from .metadata import PolicyMeta, extract_metadata
 from .splitter import split_policy_text
@@ -169,10 +170,11 @@ class IndexStore:
                 for path in list_corpus(corpus_dir or settings.corpus_dir):
                     try:
                         content = await load_file(path, llm=llm)
-                    except ValueError as e:
-                        # 解析失败 ≠ 文件已删除（PC-HR1）：磁盘上的文件读不出内容可能是
-                        # 瞬时 IO 错误/缺视觉模型——旧实现直接 continue 会落入下面的
-                        # gone 级联删除，一次解析抖动就静默清掉该文档全部 chunk。
+                    except (ValueError, LLMError) as e:
+                        # 解析/OCR 失败 ≠ 文件已删除（PC-HR1；POLICY-5 把 OCR 的
+                        # LLMError 同级收容）：磁盘上的文件读不出内容可能是瞬时 IO
+                        # 错误/缺视觉模型——旧实现直接 continue 会落入下面的 gone
+                        # 级联删除，一次解析抖动就静默清掉该文档全部 chunk。
                         # 改为：已入库的保留旧版原样可检，新文件仅记错误；均在报告 errors 留痕。
                         if path.name in known:
                             seen.add(path.name)
@@ -189,7 +191,22 @@ class IndexStore:
                         report.updated.append(meta.doc_id)
                     else:
                         report.added.append(meta.doc_id)
-                    await self._ingest(meta, content, embed_fn)
+                    try:
+                        await self._ingest(meta, content, embed_fn)
+                    except LLMError as e:
+                        # embed 失败收容（POLICY-5，评审 4.0）：此前直接上抛——首启
+                        # 场景炸 lifespan（docker restart: unless-stopped 下成崩溃
+                        # 循环），热更新场景半库提交后重启非空跳过 sync 静默服务。
+                        # 与 PC-HR1 解析失败语义同级：已入库文档保留旧版原样可检
+                        # （seen 收录防 gone 级联）、新文档仅记错误；add/updated
+                        # 回退（未成功入不入 changed），下次 sync 按指纹自动重试。
+                        if meta.doc_id in report.updated:
+                            report.updated.remove(meta.doc_id)
+                        if meta.doc_id in report.added:
+                            report.added.remove(meta.doc_id)
+                        report.errors.append(meta.doc_id)
+                        logger.warning("跳过 embed 失败文档 %s: %s", meta.doc_id, e)
+                        continue
                 for gone in set(known) - seen:
                     self._delete_doc(gone)
                     report.removed.append(gone)

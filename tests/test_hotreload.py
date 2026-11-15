@@ -396,3 +396,38 @@ async def test_concurrent_writers_serialized_no_lost_update(hr):
                            if c.doc_id == "doc_x.md")
     assert "v3 上传版内容" in final_texts, "最终内容应是后到写者 B 的 v3"
     assert r_a.updated or r_a.added  # A 确实执行了重摄（非空跑）
+
+
+async def test_embed_failure_keeps_existing_doc_no_crash(hr, monkeypatch):
+    """单文档 embed 失败收容（POLICY-5，评审 4.0）：不得炸 lifespan/清库/半库静默。
+
+    修复前：indexer.sync 的 _ingest 裸调用——embed 耗尽重试的 LLMError 直接上抛，
+    首启场景炸 lifespan（docker restart: unless-stopped 下成崩溃循环）。修后
+    语义与 PC-HR1 解析失败同级：已入库保留旧版原样可检、新文档仅记错误、
+    add/updated 回退（无成功摄取则不推进快照），下次 sync 按指纹自动重试。
+    """
+    from app.llm.client import LLMError
+
+    _write_doc(hr.corpus / "doc_a.md", "深圳市租赁提取办法甲", "传统窗口办理需提前预约。")
+    await hr.store.sync(str(hr.corpus), hr.llm.embed)
+    v1 = hr.store.snapshot.version
+    chunks_before = [c for c in hr.store.chunks if c.doc_id == "doc_a.md"]
+    assert chunks_before
+
+    # 修改 doc_a + 新增 doc_b，然后让 embed 对一切文本抛 LLMError（模拟服务 5xx）
+    _write_doc(hr.corpus / "doc_a.md", "深圳市租赁提取办法甲", "修订后的办理说明。")
+    _write_doc(hr.corpus / "doc_b.md", "深圳市租赁提取办法乙", "新增文件的办理说明。")
+
+    async def flaky_embed(texts):
+        raise LLMError("模拟 embed 服务 5xx")
+
+    report = await hr.store.sync(str(hr.corpus), flaky_embed)
+    assert sorted(report.errors) == ["doc_a.md", "doc_b.md"]
+    assert report.updated == [] and report.added == [] and report.removed == []
+    assert hr.store.snapshot.version == v1, "embed 全失败未变更库，不得推进快照"
+    assert [c for c in hr.store.chunks if c.doc_id == "doc_a.md"] == chunks_before
+
+    # 恢复后下次 sync 按指纹自动重试：两文档正常入库（失败不落死状态）
+    report2 = await hr.store.sync(str(hr.corpus), hr.llm.embed)
+    assert sorted(report2.updated + report2.added) == ["doc_a.md", "doc_b.md"]
+    assert report2.errors == []

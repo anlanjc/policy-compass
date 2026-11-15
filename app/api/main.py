@@ -30,9 +30,11 @@ app_state: dict = {}
 async def lifespan(app: FastAPI):
     llm = get_llm()
     store = IndexStore()
-    if not store.chunks:
-        report = await store.sync(None, llm.embed, llm=llm)
-        logger.info("语料同步完成: %s", report.as_dict())
+    # POLICY-5（评审 4.0）：无条件增量 sync——hash 指纹未变零成本跳过。旧实现仅
+    # 空库才同步：逐文档提交 + 首启失败重启后"非空即跳过"会让半库静默长期服务；
+    # 配合 sync 内单文档失败收容（indexer.py），失败文档下次启动按指纹自动重试。
+    report = await store.sync(None, llm.embed, llm=llm)
+    logger.info("语料同步完成: %s", report.as_dict())
     retriever = HybridRetriever(store)
 
     from ..agent import PolicyAgent
