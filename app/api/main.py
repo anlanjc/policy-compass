@@ -53,6 +53,8 @@ async def lifespan(app: FastAPI):
     )
     yield
     await llm.close()
+    from ..llm.client import reset_llm_cache  # POLICY-1：关闭后丢缓存，重启 lifespan 重建而非复用已关闭客户端
+    reset_llm_cache()
     await retriever.reranker.close()
     store.close()
 

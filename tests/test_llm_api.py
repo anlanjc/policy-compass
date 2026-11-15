@@ -243,3 +243,33 @@ async def test_stream_records_trace_jsonl(temp_env):
                     pass
     n1 = len(trace_file.read_text(encoding="utf-8").splitlines()) if trace_file.exists() else 0
     assert n1 == n0 + 1  # 流式请求恰好落一条与 JSONL
+
+
+async def test_get_llm_singleton_lifecycle(temp_env, monkeypatch):
+    """get_llm 进程级缓存单例（POLICY-1，评审 4.0）。
+
+    修复前：每次 get_llm() 新建 LLMClient（构造含独立 httpx.AsyncClient）且
+    无人 aclose——检索热路径每查询泄漏连接池（真实 embedding 部署 FD 随累计
+    请求增长）。修复=配置签名缓存：同签名同实例、签名失配自动重建、
+    reset_llm_cache() 强制丢弃（lifespan 关闭后调用）。
+    """
+    from app.config import settings
+    from app.llm.client import get_llm, reset_llm_cache
+
+    reset_llm_cache()  # 隔离其他测试的缓存状态
+    try:
+        a, b = get_llm(), get_llm()
+        assert a is b, "同签名 get_llm 必须返回同一实例（每调用新建=连接池泄漏）"
+        if settings.effective_llm_mode == "mock":
+            assert not hasattr(a, "_http"), "mock 客户端不应持有 httpx 连接池"
+        # 签名失配（进程内改 embed 开关）→ 自动重建，不返回已缓存旧实例
+        old = a
+        saved = settings.embed_enabled
+        try:
+            settings.embed_enabled = not saved
+            assert get_llm() is not old, "配置签名变更后必须重建客户端"
+        finally:
+            settings.embed_enabled = saved
+        assert get_llm() is not old  # 恢复后签名再次失配，仍是新实例
+    finally:
+        reset_llm_cache()

@@ -259,9 +259,48 @@ class LLMClient:
 
 
 def get_llm() -> LLMClient:
-    """按配置返回真实或 mock 实现（延迟导入避免测试路径依赖）。"""
+    """按配置返回真实或 mock 实现（进程级缓存单例，POLICY-1 评审 4.0）。
+
+    此前每次调用新建 LLMClient（构造即含独立 httpx.AsyncClient 连接池）且
+    无人 aclose——检索热路径（hybrid._vector_search 每查询经 get_llm）在真实
+    embedding 部署下每请求泄漏连接池、FD 随累计请求增长、连接复用为零
+    （httpx AsyncClient 无 __del__ 兜底，实测库版本 0.28.1）。改为按配置签名
+    缓存单例：签名（模式/端点/key/模型/embed 开关）失配自动重建（测试进程内
+    改配置语义不变），进程级生命周期统一交给 lifespan close()+reset_llm_cache()。
+    """
+    global _llm_cache
+    sig = _llm_signature()
+    if _llm_cache is not None and _llm_cache[0] == sig:
+        return _llm_cache[1]
     if settings.effective_llm_mode == "mock":
         from .mock import MockLLMClient
 
-        return MockLLMClient()  # type: ignore[return-value]
-    return LLMClient()
+        client: LLMClient = MockLLMClient()  # type: ignore[assignment]
+    else:
+        client = LLMClient()
+    _llm_cache = (sig, client)
+    return client
+
+
+def _llm_signature() -> tuple:
+    """get_llm 单例的配置签名：影响客户端构造的全部字段（POLICY-1）。"""
+    s = settings
+    return (
+        s.effective_llm_mode,
+        s.llm_api_base,
+        s.llm_api_key,
+        s.llm_model,
+        s.embed_enabled,
+        s.effective_embed_base,
+        s.effective_embed_key,
+        s.embed_model,
+    )
+
+
+_llm_cache: tuple[tuple, LLMClient] | None = None
+
+
+def reset_llm_cache() -> None:
+    """丢弃 get_llm 缓存单例（lifespan close 后/需要强制重建时调用，POLICY-1）。"""
+    global _llm_cache
+    _llm_cache = None
