@@ -273,3 +273,55 @@ async def test_get_llm_singleton_lifecycle(temp_env, monkeypatch):
         assert get_llm() is not old  # 恢复后签名再次失配，仍是新实例
     finally:
         reset_llm_cache()
+
+
+async def test_embed_independent_endpoint(temp_env, monkeypatch):
+    """embed 独立端点/密钥生效（POLICY-7，评审 4.0）。
+
+    修复前：EMBED_API_BASE/EMBED_API_KEY 是死配置（effective_embed_* 无运行时
+    消费者），/embeddings 永远打 LLM 端点用 LLM key 鉴权——README/.env.example/
+    compose 教配的独立 embedding 供应商配了不生效（当时可用纯因两端点恰好相同）。
+    """
+    import httpx
+
+    from app.config import settings
+    from app.llm.client import LLMClient
+
+    saved = (settings.embed_enabled, settings.embed_api_base, settings.embed_api_key)
+    try:
+        # 1) embed 端点/key 与 LLM 相同 → 复用主客户端（零额外连接池）
+        monkeypatch.setattr(settings, "embed_enabled", True)
+        monkeypatch.delenv("EMBED_API_BASE", raising=False)
+        monkeypatch.delenv("EMBED_API_KEY", raising=False)
+        c_same = LLMClient()
+        assert c_same._embed_http is None
+
+        # 2) 独立端点+key → 建独立客户端，请求打 /embeddings 且用 embed key 鉴权
+        monkeypatch.setattr(settings, "embed_api_base", "https://embed.example.com/v1")
+        monkeypatch.setattr(settings, "embed_api_key", "sk-embed-test")
+        c_diff = LLMClient()
+        assert c_diff._embed_http is not None
+        assert str(c_diff._embed_http.base_url).rstrip("/") == "https://embed.example.com/v1"
+        assert "sk-embed-test" in c_diff._embed_http.headers["Authorization"]
+
+        seen: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["auth"] = request.headers.get("Authorization", "")
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.1, 0.2]}]}
+            )
+
+        c_diff._embed_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            base_url="https://embed.example.com/v1",
+            headers={"Authorization": "Bearer sk-embed-test"},
+        )
+        vecs = await c_diff.embed(["文本"])
+        assert seen["url"] == "https://embed.example.com/v1/embeddings"
+        assert seen["auth"] == "Bearer sk-embed-test"
+        assert vecs == [[0.1, 0.2]]
+        await c_diff.close()  # 独立 embed 客户端一并关闭（不悬挂）
+    finally:
+        settings.embed_enabled, settings.embed_api_base, settings.embed_api_key = saved

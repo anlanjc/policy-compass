@@ -88,16 +88,36 @@ class LLMClient:
             timeout=settings.llm_timeout,
             trust_env=settings.llm_trust_env,
         )
+        # POLICY-7（评审 4.0）：embedding 支持独立端点与密钥——此前
+        # EMBED_API_BASE/EMBED_API_KEY 是死配置（config.effective_embed_* 无任何
+        # 运行时消费者），/embeddings 永远打 LLM 端点用 LLM key 鉴权，README/
+        # .env.example/compose 教配的独立 embedding 供应商配了不生效（当前环境
+        # 可用纯因 LLM 与 embed 恰好同端点）。effective_embed_* 留空复用 LLM 配置；
+        # 同端点同 key 时复用主连接池（零额外开销），不同则建独立客户端。
+        self._embed_base = settings.effective_embed_base.rstrip("/")
+        self._embed_key = settings.effective_embed_key
+        if (
+            self._embed_base == settings.llm_api_base.rstrip("/")
+            and self._embed_key == settings.llm_api_key
+        ):
+            self._embed_http = None  # 复用主客户端
+        else:
+            self._embed_http = httpx.AsyncClient(
+                base_url=self._embed_base,
+                headers={"Authorization": f"Bearer {self._embed_key}"},
+                timeout=settings.llm_timeout,
+                trust_env=settings.llm_trust_env,
+            )
 
     # ---------- 底层请求 ----------
 
-    async def _post_with_retry(self, url: str, payload: dict) -> dict:
+    async def _post_with_retry(self, url: str, payload: dict, client: httpx.AsyncClient | None = None) -> dict:
         delay = 0.5
         last_exc: Exception | None = None
         for attempt in range(settings.llm_max_retries + 1):
             try:
                 stats.incr("llm_requests")
-                resp = await self._http.post(url, json=payload)
+                resp = await (client or self._http).post(url, json=payload)
                 if resp.status_code in RETRYABLE_STATUS:
                     raise LLMError(f"retryable status {resp.status_code}")
                 try:
@@ -247,8 +267,10 @@ class LLMClient:
         for i in range(0, len(texts), settings.embed_batch_size):
             batch = texts[i : i + settings.embed_batch_size]
             stats.incr("embed_calls")
+            # POLICY-7：embed 走独立端点客户端（与 chat 同端点同时为 None 复用主客户端）
             data = await self._post_with_retry(
-                "/embeddings", {"model": settings.embed_model, "input": batch}
+                "/embeddings", {"model": settings.embed_model, "input": batch},
+                client=self._embed_http,
             )
             items = sorted(data["data"], key=lambda x: x["index"])
             results.extend(item["embedding"] for item in items)
@@ -256,6 +278,8 @@ class LLMClient:
 
     async def close(self) -> None:
         await self._http.aclose()
+        if self._embed_http is not None:  # POLICY-7：独立 embed 客户端一并关闭
+            await self._embed_http.aclose()
 
 
 def get_llm() -> LLMClient:
