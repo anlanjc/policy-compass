@@ -52,4 +52,4 @@ git push -u origin main        # 分支已统一 main，ci.yml 的 push 触发�
 1. 链接写进简历项目行与 README 顶部（`在线演示（mock）`徽章）。
 2. 找 5-10 个同学每人问 10 个真问题，按试点模板记录成功率/失败案例——**政策问法的长尾（各地方言/黑话表述）只能从真人提问里来**，试用问题回流评测集 v3 的价值比 askbi 更高（见 PRODUCTION_GAP §2-1）。
 3. 用真实 HTTP 链路复跑 `scripts/load_test.py`，把压测口径从"本地进程全栈 QPS 45-49"补一条"公网实测"——两个数字是两个问题（编排上限 vs 端到端），Render 免费档 CPU 弱、公网数字必然低，提前想好双口径叙事，不是退步。
-4. 政策语料更新演示：`git pull` 换一版语料重新部署，配合 EVIDENCE 里"废止文件强降权"叙事讲热更新链路（hash 增量索引已有）。
+4. 政策语料更新演示：`git pull` 换一版语料重新部署，配合 EVIDENCE 里"废止文件强降权"叙事讲热更新链路（hash 增量索引已有）。compose 路径：卷只放索引/trace（/app/runtime），语料随镜像层走——`docker compose up -d --build` 即换语料重摄取，索引保留（POLICY-6 分层语义）。

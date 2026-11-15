@@ -118,7 +118,7 @@ pip install -r requirements.txt -i https://pypi.org/simple/
 python scripts/ingest.py
 
 # 2) 测试回归（mock 模式，零 API key）
-python -m pytest tests/ -q          # 65 passed（PC-CROWD 起；历史批次口径见各批次节）
+python -m pytest tests/ -q          # 66 passed（POLICY 批次起；历史批次口径见各批次节）
 
 # 3) 评测
 POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --eval-set data/eval_set_v2.jsonl --out evidence/eval_v2_mock.md

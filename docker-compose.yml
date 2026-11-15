@@ -13,8 +13,20 @@ services:
       EMBED_API_BASE: ${EMBED_API_BASE:-https://api.siliconflow.cn/v1}
       EMBED_MODEL: ${EMBED_MODEL:-BAAI/bge-m3}
       RERANK_API_KEY: ${RERANK_API_KEY:-}
+      # 开关透传（POLICY-4，评审 4.0）：此前 compose 白名单漏掉两个开关，容器内
+      # 恒为代码默认值——.env 的生产口径（EMBED_ENABLED=false 向量路休眠）在
+      # docker 路径静默失效。compose 默认按项目目录 .env 做变量插值，显式透传后
+      # 与 CI/本地口径一致；缺省回退代码默认（true）。
+      EMBED_ENABLED: ${EMBED_ENABLED:-true}
+      RERANK_ENABLED: ${RERANK_ENABLED:-true}
+      # 持久化产物与语料分层（POLICY-6，评审 4.0）：卷只放索引与 trace，语料随
+      # 镜像层走——旧命名卷挂 /app/data 会遮蔽镜像内语料（非空卷首用后不再拷入
+      # 镜像内容），重建镜像换语料后 sync 读到的仍是卷内旧文件，文档化热更新链路
+      # 静默失效；改为 DB_PATH/TRACE_DIR 指向卷内 runtime 目录后，重建镜像即换语料。
+      DB_PATH: /app/runtime/index.db
+      TRACE_DIR: /app/runtime/traces
     volumes:
-      - policy-data:/app/data
+      - policy-data:/app/runtime
     restart: unless-stopped
 
 volumes:

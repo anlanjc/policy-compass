@@ -46,3 +46,28 @@ def test_doc_test_count_matches_suite():
     assert int(m.group(1)) == n_tests, (
         f"README 徽章 {m.group(1)} ≠ 实际测试函数数 {n_tests}——文档数字再漂移"
     )
+
+
+def test_compose_env_switches_and_volume_layering():
+    """compose 开关透传 + 卷/语料分层（POLICY-4/POLICY-6，评审 4.0）。
+
+    POLICY-4：environment 白名单漏掉 EMBED_ENABLED/RERANK_ENABLED，容器内恒为
+    代码默认值——.env 的生产口径（EMBED_ENABLED=false）在 docker 路径静默失效；
+    POLICY-6：命名卷挂 /app/data 遮蔽镜像内语料（非空卷首用后不再拷入镜像内容），
+    重建镜像换语料后 sync 读到的仍是卷内旧文件。两处都以 compose 文件解析钉死。
+    """
+    import yaml
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    compose = yaml.safe_load((root / "docker-compose.yml").read_text(encoding="utf-8"))
+    svc = compose["services"]["policy-compass"]
+    env = svc["environment"]
+    # POLICY-4：两个开关必须显式在 environment 白名单（带代码默认值兜底）
+    assert env.get("EMBED_ENABLED") == "${EMBED_ENABLED:-true}"
+    assert env.get("RERANK_ENABLED") == "${RERANK_ENABLED:-true}"
+    # POLICY-6：卷不得挂 /app/data（遮蔽镜像内语料）；DB/trace 指向卷内 runtime
+    vols = [v for v in svc["volumes"] if isinstance(v, str)]
+    assert vols == ["policy-data:/app/runtime"], f"命名卷挂载点变更未同步测试: {vols}"
+    assert env.get("DB_PATH") == "/app/runtime/index.db"
+    assert env.get("TRACE_DIR") == "/app/runtime/traces"
