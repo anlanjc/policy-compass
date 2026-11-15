@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from ..config import settings
@@ -88,15 +87,22 @@ class PolicyAgent:
             {"generate": "generate", "fallback": "fallback", "end": END},
         )
         builder.add_edge("fallback", END)
-        self.graph = builder.compile(checkpointer=MemorySaver())
+        # POLICY-2（评审 4.0）：无跨请求 checkpointer——此前 MemorySaver 把完整图
+        # 状态（documents 全文/messages/answer/events）按 thread 写内存永不淘汰，
+        # 非流式 /api/chat 每请求全新 uuid thread_id → 内存随累计请求数线性增长
+        # 直至 OOM（langgraph InMemorySaver 官方 docstring 亦声明仅供调试测试）。
+        # 本系统多轮记忆的契约是**调用方显式传 history**（routes.py 每请求携带
+        # req.history 重建 messages），checkpointer 是纯写入无人读取的死重——
+        # 置 None 后内存占用与在飞请求数相关、与累计请求数无关。
+        self.graph = builder.compile(checkpointer=None)
 
     # ---------- 调用入口 ----------
 
     async def run(self, question: str, thread_id: str | None = None, history: list[dict] | None = None) -> AgentState:
         """完整执行图（非流式），返回最终 state（answer/sources/events）。
 
-        thread_id：多轮对话共享同一 id 以复用 checkpointer 记忆；单次调用
-        省略时自动生成，避免跨问题 state 泄漏。
+        thread_id：仅作 trace 关联标识（POLICY-2 后无跨请求状态持久化）；
+        多轮对话由调用方显式传 history 重建上下文。单次调用省略时自动生成。
         """
         import uuid
 

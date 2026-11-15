@@ -136,3 +136,32 @@ def test_balance_string_with_wan_unit():
     r = execute_tool(ToolCall(tool="housing_loan_quota",
                               args={"city": "杭州", "balance": "4万"}))
     assert r["ok"] and r["quota_wan"] == 80.0  # 4万×20倍=80万（杭房公委〔2026〕1号）
+
+
+async def test_no_cross_request_checkpointer(components):
+    """图无跨请求 checkpointer（POLICY-2，评审 4.0）：内存与在飞请求相关、与累计无关。
+
+    修复前：MemorySaver 按全新 uuid thread_id 累积完整图状态（documents 全文/
+    messages/answer/events）永不淘汰——内存随累计请求数线性增长直至 OOM
+    （langgraph InMemorySaver 官方文档声明仅供调试测试）。本系统多轮记忆契约
+    是调用方显式传 history（routes.py 每请求重建 messages），checkpointer 为
+    纯写入无人读取的死重。置 None 后 thread_id 仅作 trace 关联。
+    """
+    agent = components["agent"]
+    assert agent.graph.checkpointer is None, "图不得再挂 MemorySaver（内存随累计请求无界增长）"
+
+    # 同一 thread_id 连续两次请求：独立执行、均正常出答案，且互不可见对方状态
+    st1 = await agent.run("杭州公积金租房提取每月最多能提多少", thread_id="same-thread")
+    st2 = await agent.run("上海首套公积金贷款个人最高能贷多少", thread_id="same-thread")
+    assert st1.get("answer") and st2.get("answer")
+    assert st1["question"] != st2["question"] or st1["answer"] != st2["answer"]
+
+    # 多轮记忆契约=调用方显式传 history：输入 plumbing 不受 checkpointer 缺失影响
+    st3 = await agent.run(
+        "那上海呢",
+        thread_id="same-thread",
+        history=[{"role": "user", "content": "杭州租房提取额度是多少"},
+                 {"role": "assistant", "content": "每月2000元。"}],
+    )
+    roles = [m["role"] for m in st3["messages"]]
+    assert roles == ["user", "assistant", "user"], "history 显式进 messages"
