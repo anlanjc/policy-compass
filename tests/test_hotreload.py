@@ -431,3 +431,61 @@ async def test_embed_failure_keeps_existing_doc_no_crash(hr, monkeypatch):
     report2 = await hr.store.sync(str(hr.corpus), hr.llm.embed)
     assert sorted(report2.updated + report2.added) == ["doc_a.md", "doc_b.md"]
     assert report2.errors == []
+
+
+async def test_ocr_partial_failure_not_cached(temp_env, tmp_path, monkeypatch):
+    """OCR 瞬时失败页不得固化（POLICY-3，评审 4.0）：残缺结果不落缓存可重试。
+
+    修复前：逐页失败仅 warning 后丢弃，只要 ≥1 页成功残缺拼接文本就按内容哈希
+    永久写缓存（命中直接返回）——一次瞬时失败固化为永久残缺语料。
+    """
+    import hashlib
+
+    from app.config import settings
+    from app.ingestion import ocr as ocr_mod
+    from app.llm.client import LLMError
+
+    cache_dir = tmp_path / "ocr_cache"
+    monkeypatch.setattr(settings, "ocr_cache_dir", str(cache_dir))
+    monkeypatch.setattr(ocr_mod, "render_pages", lambda p, dpi=150: [b"pg1", b"pg2"])
+    # 测试走真实路径（视觉模型由替身注入）：mock 守卫是防误调真模型的闸，类属性级替换
+    monkeypatch.setattr(
+        type(settings), "effective_llm_mode", property(lambda self: "real")
+    )
+
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"fake pdf bytes")
+    file_hash = hashlib.sha256(pdf.read_bytes()).hexdigest()[:16]
+    cache_file = cache_dir / f"{pdf.stem}_{file_hash}.txt"
+
+    class FlakyOCR:
+        """视觉模型替身：fail_pages 内的调用序号抛 5xx，其余正常转录。"""
+
+        def __init__(self, fail_pages: set[int]) -> None:
+            self.fail_pages = fail_pages
+            self.calls = 0
+
+        async def _post_with_retry(self, path, payload):
+            self.calls += 1
+            if self.calls in self.fail_pages:
+                raise LLMError("模拟视觉模型 5xx")
+            return {
+                "choices": [{"message": {"content": f"第{self.calls}页 转录条文，额度为2600元。"}}]
+            }
+
+    # 1) 第 2 页失败：抛 LLMError，缓存不落盘（残缺不可固化）
+    flaky = FlakyOCR(fail_pages={2})
+    with pytest.raises(LLMError):
+        await ocr_mod.ocr_pdf(flaky, pdf)
+    assert not cache_file.exists(), "残缺 OCR 结果不得写缓存"
+
+    # 2) 服务恢复后重跑（缓存未写故可重跑）：全成功 → 落缓存
+    flaky2 = FlakyOCR(fail_pages=set())
+    text = await ocr_mod.ocr_pdf(flaky2, pdf)
+    assert "第1页" in text and "第2页" in text
+    assert cache_file.exists() and "第2页" in cache_file.read_text(encoding="utf-8")
+
+    # 3) 缓存命中：零视觉模型调用
+    flaky3 = FlakyOCR(fail_pages={1})
+    text3 = await ocr_mod.ocr_pdf(flaky3, pdf)
+    assert flaky3.calls == 0 and text3 == text

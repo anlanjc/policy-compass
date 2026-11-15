@@ -73,6 +73,7 @@ async def ocr_pdf(llm: LLMClient, pdf_path: str | Path, max_pages: int = 10) -> 
 
     pages = render_pages(pdf_path)
     page_texts: list[str] = []
+    failed_pages = 0
     for i, png in enumerate(pages[:max_pages]):
         b64 = base64.b64encode(png).decode()
         payload = {
@@ -97,8 +98,18 @@ async def ocr_pdf(llm: LLMClient, pdf_path: str | Path, max_pages: int = 10) -> 
                 # splitter 剥离标记并记账 chunk 级页码
                 page_texts.append(f"【p{i + 1}】\n{content}")
         except (LLMError, KeyError, IndexError) as e:
+            failed_pages += 1
             logger.warning("OCR 第 %d 页失败: %s", i + 1, e)
+    # POLICY-3（评审 4.0）：残缺结果不得落缓存。此前瞬时失败页被 warning 后丢弃，
+    # 只要 ≥1 页成功残缺拼接文本就按文件内容哈希永久写缓存（命中直接返回、
+    # 无 TTL 无残缺标记）——一次失败固化为永久残缺语料。改为全部尝试页成功才
+    # 写缓存；有失败页即抛 LLMError，由上层按单文档收容留痕（POLICY-5 收容后
+    # errors 留痕、下次 sync 自动重试），缓存未写故失败页可重跑。
+    if failed_pages:
+        raise LLMError(
+            f"{pdf_path.name}: OCR {failed_pages}/{min(len(pages), max_pages)} 页失败"
+            "（残缺结果不落缓存，待重试）"
+        )
     text = "\n".join(page_texts)
-    if text:
-        cache_file.write_text(text, encoding="utf-8")
+    cache_file.write_text(text, encoding="utf-8")
     return text
