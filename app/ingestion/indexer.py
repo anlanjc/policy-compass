@@ -222,9 +222,13 @@ class IndexStore:
         return report
 
     async def _ingest(self, meta: PolicyMeta, content: str, embed_fn: EmbedFn) -> None:
-        self._delete_doc(meta.doc_id)
         pieces = split_policy_text(content, meta.title)
         if not pieces:
+            # 内容切不出任何块：删除旧版（若有）并立即提交——不留跨 await 的
+            # 未提交删除（POLICY-9 同类窗口：sync 后续文档的 load_file await
+            # 期间免锁读者会脏读到"该文档已消失"）
+            with self._conn:
+                self._delete_doc(meta.doc_id)
             return
         # embed 输入口径（2026-11-06 如实化注释，行为零变更）：
         # splitter._pack 构造 Chunk 时从不赋值 title（恒为默认 ""），故本行的
@@ -236,7 +240,15 @@ class IndexStore:
         vectors = embed_fn([f"{c.title}\n{c.text}" for c in pieces])
         if hasattr(vectors, "__await__"):
             vectors = await vectors
+        # POLICY-9（评审 4.0 复核属实）：旧实现第一步即 _delete_doc（DELETE 未提交），
+        # 随后跨 await 等待 embed（真实部署秒级窗口）——doc_count()/list_docs()
+        # 等免锁读者用同一连接 SELECT，脏读到"该文档已消失"的未提交中间态，
+        # 重建期间 /api/health 与 GET /api/documents 抖动；且 embed 失败收容路径
+        # （POLICY-5）会把该未提交删除随 sync 尾部 commit 固化，"保留旧版原样
+        # 可检"在 DB 层面落空。改为 embed 就绪后删除+重插同事务原子替换：
+        # await 期间连接上永无未提交写，读者只见已提交的旧版或新版。
         with self._conn:
+            self._delete_doc(meta.doc_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (

@@ -433,6 +433,82 @@ async def test_embed_failure_keeps_existing_doc_no_crash(hr, monkeypatch):
     assert report2.errors == []
 
 
+# ---------- POLICY-9（评审 4.0）：摄取窗口未提交删除不得对免锁读者可见 ----------
+
+
+async def test_ingest_window_no_dirty_read(hr):
+    """POLICY-9：_ingest 的未提交删除不得跨 await 对 doc_count/list_docs 可见。
+
+    修复前：_ingest 第一步即 _delete_doc（DELETE 未提交），随后跨 await 等待
+    embed（真实部署秒级窗口）——doc_count()/list_docs() 是免锁读者且用同一
+    连接，脏读到"该文档已消失"的未提交中间态：重建期间 /api/health 的 docs
+    数与 GET /api/documents 的文档列表抖动。PC-13 write_lock 只串行化写者、
+    不覆盖这两个读者；e30b6cb 只改评测装置与检索层、未动 sync/_ingest，
+    窗口不受其影响。修复=删除延后至 embed 就绪，与重插同事务原子替换。
+    """
+    _write_doc(hr.corpus / "doc_a.md", "深圳市租赁提取办法甲", "传统窗口办理需提前预约。")
+    await hr.store.sync(str(hr.corpus), hr.llm.embed)
+    assert hr.store.doc_count() == 1
+
+    # 修改 doc_a 触发"删除+重摄"路径；gated embed 卡住模拟真实秒级窗口
+    _write_doc(hr.corpus / "doc_a.md", "深圳市租赁提取办法甲", "修订后的办理说明。")
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+
+    async def gated_embed(texts):
+        entered.set()
+        await gate.wait()
+        return await hr.llm.embed(texts)
+
+    sync_task = asyncio.create_task(hr.store.sync(str(hr.corpus), gated_embed))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+
+    # 窗口内读者（与 /api/health、GET /api/documents 完全同路径）：
+    # 只允许看到已提交状态（旧版原样在库），不得看到"文档已消失"的中间态
+    assert hr.store.doc_count() == 1, "embed 窗口内 doc_count 不得脏读下降"
+    docs = hr.store.list_docs()
+    assert [d["doc_id"] for d in docs] == ["doc_a.md"], (
+        "embed 窗口内 list_docs 不得脏读丢失文档"
+    )
+
+    gate.set()
+    report = await asyncio.wait_for(sync_task, timeout=10)
+    assert report.updated == ["doc_a.md"]
+    assert hr.store.doc_count() == 1
+
+
+async def test_embed_failure_preserves_old_rows_in_db(hr):
+    """POLICY-9 同根因的 DB 层断言：embed 失败收容后旧版必须真保留在库中。
+
+    修复前：_ingest 先执行未提交 DELETE，LLMError 收容（POLICY-5）后 sync 尾部
+    commit 把删除固化——内存快照因 changed=False 故意不刷新，掩盖了 DB 层已丢行；
+    "已入库保留旧版原样可检"仅对检索路径成立，docs 表该文档已消失，下次 sync
+    会把同一文档误报为 added 而非 updated（指纹比对失去旧 hash 基准）。修复=
+    删除与重插同事务，embed 失败则整个事务不发生，旧版在 DB 层面真正保留。
+    """
+    from app.llm.client import LLMError
+
+    _write_doc(hr.corpus / "doc_a.md", "深圳市租赁提取办法甲", "传统窗口办理需提前预约。")
+    await hr.store.sync(str(hr.corpus), hr.llm.embed)
+
+    _write_doc(hr.corpus / "doc_a.md", "深圳市租赁提取办法甲", "修订后的办理说明。")
+
+    async def flaky_embed(texts):
+        raise LLMError("模拟 embed 服务 5xx")
+
+    report = await hr.store.sync(str(hr.corpus), flaky_embed)
+    assert report.errors == ["doc_a.md"]
+    # DB 层面旧版原样保留（不只内存快照）
+    assert hr.store.doc_count() == 1
+    rows = hr.store._conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE doc_id='doc_a.md'"
+    ).fetchone()[0]
+    assert rows > 0
+    # 恢复后按指纹自动重试：旧 hash 仍在库 → 语义应为 updated（而非误报 added）
+    report2 = await hr.store.sync(str(hr.corpus), hr.llm.embed)
+    assert report2.updated == ["doc_a.md"] and report2.errors == []
+
+
 async def test_ocr_partial_failure_not_cached(temp_env, tmp_path, monkeypatch):
     """OCR 瞬时失败页不得固化（POLICY-3，评审 4.0）：残缺结果不落缓存可重试。
 
