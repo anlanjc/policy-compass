@@ -325,3 +325,184 @@ async def test_embed_independent_endpoint(temp_env, monkeypatch):
         await c_diff.close()  # 独立 embed 客户端一并关闭（不悬挂）
     finally:
         settings.embed_enabled, settings.embed_api_base, settings.embed_api_key = saved
+
+
+# ---------- POLICY-10（评审 4.0）：流式首字节前重试 + 统一失败计数/包装 ----------
+
+
+def _sse_body(deltas: list[str]) -> str:
+    """构造 OpenAI 兼容 SSE 响应体。"""
+    frames = [
+        "data: " + json.dumps({"choices": [{"delta": {"content": d}}]},
+                              ensure_ascii=False) + "\n\n"
+        for d in deltas
+    ]
+    frames.append("data: [DONE]\n\n")
+    return "".join(frames)
+
+
+async def _stream_client(monkeypatch, handler, max_retries: int):
+    """真实 LLMClient + MockTransport 替身（与 PC-8 测试同法，零真实网络）。"""
+    import httpx
+
+    from app.config import settings
+    from app.llm.client import LLMClient
+
+    monkeypatch.setattr(settings, "llm_max_retries", max_retries)
+    c = LLMClient()
+    await c._http.aclose()
+    c._http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url=settings.llm_api_base
+    )
+    return c
+
+
+async def test_stream_retry_before_first_byte(temp_env, monkeypatch):
+    """POLICY-10：首字节前的 retryable 状态按 _post_with_retry 同口径退避重试。
+
+    修复前：429/502/503 直接抛 LLMError 终止整个 SSE（前端唯一路径
+    static/index.html stream:true），非流式同窗口有 3 次退避——瞬时抖动
+    直接杀死整条流式回答。修复=首字节前同口径有限退避（llm_retries 计数）。
+    """
+    import httpx
+
+    from app.llm.stats import stats
+
+    attempts = {"n": 0}
+
+    def handler(request):
+        attempts["n"] += 1
+        if attempts["n"] <= 2:
+            return httpx.Response(503, text="upstream overloaded")
+        return httpx.Response(
+            200, text=_sse_body(["你好", "，世界"]),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    c = await _stream_client(monkeypatch, handler, max_retries=2)
+    try:
+        before = stats.snapshot()
+        deltas = [d async for d in c.chat_stream([{"role": "user", "content": "hi"}])]
+        after = stats.snapshot()
+        assert "".join(deltas) == "你好，世界", "重试后应产出完整回答"
+        assert attempts["n"] == 3, "两次 503 + 一次成功，退避重试必须发生"
+        assert after["llm_retries"] - before["llm_retries"] == 2, "重试计数缺失"
+    finally:
+        await c._http.aclose()
+
+
+async def test_stream_exhaustion_counted_and_wrapped(temp_env, monkeypatch):
+    """POLICY-10：流式耗尽重试后 LLMError + llm_failures 计数。
+
+    修复前：retryable 分支既不重试也不记 llm_failures（对比 _post_with_retry
+    的统一失败计数）——/api/stats 对流式路径的失败率观测失真。
+    """
+    import httpx
+
+    from app.llm.client import LLMError
+    from app.llm.stats import stats
+
+    attempts = {"n": 0}
+
+    def handler(request):
+        attempts["n"] += 1
+        return httpx.Response(429, text="rate limited")
+
+    c = await _stream_client(monkeypatch, handler, max_retries=1)
+    try:
+        before = stats.snapshot()
+        raised = ""
+        try:
+            async for _ in c.chat_stream([{"role": "user", "content": "hi"}]):
+                pass
+        except LLMError as e:
+            raised = str(e)
+        after = stats.snapshot()
+        assert raised, "耗尽重试必须抛 LLMError"
+        assert "429" in raised or "已重试" in raised
+        assert attempts["n"] == 2, "max_retries=1 → 1 次尝试 + 1 次重试"
+        assert after["llm_retries"] - before["llm_retries"] == 1
+        assert after["llm_failures"] - before["llm_failures"] >= 1, (
+            "llm_failures 计数缺失（retryable 分支零计数）"
+        )
+    finally:
+        await c._http.aclose()
+
+
+async def test_stream_http_error_wrapped_as_llmerror(temp_env, monkeypatch):
+    """POLICY-10：非重试型 HTTP 错误（401）统一包装为 LLMError。
+
+    修复前：raise_for_status() 的 httpx.HTTPStatusError 不在 except 列表内
+    裸穿透——违反"HTTP 错误统一包装为 LLMError"契约（_post_with_retry 同契约）。
+    """
+    import httpx
+
+    from app.llm.client import LLMError
+
+    def handler(request):
+        return httpx.Response(401, text='{"error": "invalid api key"}')
+
+    c = await _stream_client(monkeypatch, handler, max_retries=0)
+    try:
+        exc: Exception | None = None
+        try:
+            async for _ in c.chat_stream([{"role": "user", "content": "hi"}]):
+                pass
+        except Exception as e:  # noqa: BLE001 —— 本测试就是要验异常类型
+            exc = e
+        assert isinstance(exc, LLMError), (
+            f"应为 LLMError，实际裸抛 {type(exc).__name__}（违反统一包装契约）"
+        )
+        assert "401" in str(exc)
+    finally:
+        await c._http.aclose()
+
+
+async def test_stream_no_retry_after_first_byte(temp_env, monkeypatch):
+    """POLICY-10 诚实边界：已产出增量后中途断流不得重试。
+
+    重试会向客户端重复已写内容——只能以 LLMError 终止本次流（沿用既有
+    中途失败语义：llm_failures 计数 + '流式请求失败'）。此测试在修复前后
+    都必须绿：守门修复不得把重试越界到首字节之后。
+    """
+    import httpx
+
+    from app.llm.client import LLMError
+    from app.llm.stats import stats
+
+    attempts = {"n": 0}
+
+    async def broken_stream():
+        # 只给一个增量帧（不给 [DONE]），随后连接中断——模拟"首字节已写出
+        # 后流被掐断"；若带 [DONE]，流会正常结束而非中断（测试装置需如实模拟）
+        frame = "data: " + json.dumps(
+            {"choices": [{"delta": {"content": "第一"}}]}, ensure_ascii=False
+        ) + "\n\n"
+        yield frame.encode("utf-8")
+        raise httpx.ReadError("连接中断")
+
+    def handler(request):
+        attempts["n"] += 1
+        return httpx.Response(
+            200, content=broken_stream(),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    c = await _stream_client(monkeypatch, handler, max_retries=3)
+    try:
+        before = stats.snapshot()
+        collected = []
+        raised = ""
+        try:
+            async for d in c.chat_stream([{"role": "user", "content": "hi"}]):
+                collected.append(d)
+        except LLMError as e:
+            raised = str(e)
+        after = stats.snapshot()
+        assert "".join(collected) == "第一", "首字节必须已产出"
+        assert raised, "中途断流以 LLMError 终止"
+        assert attempts["n"] == 1, "首字节后绝不重试（重复内容）"
+        assert after["llm_retries"] - before["llm_retries"] == 0
+        assert after["llm_failures"] - before["llm_failures"] >= 1
+    finally:
+        await c._http.aclose()

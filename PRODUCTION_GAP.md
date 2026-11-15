@@ -7,7 +7,7 @@
 
 | 要素 | 现状 | 证据 |
 |---|---|---|
-| 测试/评测 | 73 pytest 全绿；评测三层（v1 smoke 33/v2 full 90+holdout 15），真模型 v1 93.9% 零回归、v2 93.3%（refuse 12/12 零编造）、消融 95.9% | evidence/ 四份报告 |
+| 测试/评测 | 77 pytest 全绿；评测三层（v1 smoke 33/v2 full 90+holdout 15），真模型 v1 93.9% 零回归、v2 93.3%（refuse 12/12 零编造）、消融 95.9% | evidence/ 四份报告 |
 | 语料真实性 | **16 份真实政策文件×多城**，每份带 source_url+fetched_at；找不到官方原文的（如成都 412 反爬）用权威转载并声明 | data/corpus/ 各文件头部 |
 | 可靠性 | 故障注入 5 场景 61 次**编造=0**（含"张冠李戴"库外城市缺陷三层修复）；rerank 失败降级、评分保守记分、LLM 退避重试 | evidence/fault_injection.md |
 | 性能 | HTTP 全栈两轮压测：零延迟 500req×20/50/100 并发 QPS 45~49（CPU 饱和、错误率 0）；模拟 LLM 延迟 1.5s 下 P50≈6-7s≈4-5 个串行 LLM 步——瓶颈=LTM 串行调用，**纯检索仅 1.5ms（占比 9%）** | evidence/load_test.md |

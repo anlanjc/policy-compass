@@ -179,6 +179,15 @@ class LLMClient:
 
         协议要点：响应为 text/event-stream，每帧 `data: {...}`，
         以 `data: [DONE]` 结束；增量在 choices[0].delta.content。
+
+        POLICY-10（评审 4.0 复核属实）：首字节前的建流阶段与 _post_with_retry
+        同口径有限退避（429/5xx、超时/网络错误；llm_requests 逐次、llm_retries
+        逐次、耗尽记 llm_failures），并把 raise_for_status 的 HTTPStatusError
+        统一包装为 LLMError——此前该窗口零重试（一次 429/502/503 即终止前端
+        唯一路径 static/index.html stream:true 的整条 SSE）、retryable 分支不记
+        失败、裸 httpx 异常违反"HTTP 错误统一包装为 LLMError"契约。诚实边界：
+        一旦已产出任何增量（字节已发给客户端）绝不重试——重试会向用户重复
+        已写内容，只能以 LLMError 终止本次流（routes 层全局兜底转 SSE error 帧）。
         """
         payload = {
             "model": settings.llm_model,
@@ -186,33 +195,59 @@ class LLMClient:
             "temperature": temperature,
             "stream": True,
         }
-        stats.incr("llm_requests")
-        try:
-            async with self._http.stream(
-                "POST", "/chat/completions", json=payload
-            ) as resp:
-                if resp.status_code in RETRYABLE_STATUS:
-                    raise LLMError(f"retryable status {resp.status_code}")
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[len("data:") :].strip()
-                    if data == "[DONE]":
-                        break
+        delay = 0.5
+        yielded = False  # 诚实边界标记：首字节后不可重试（POLICY-10）
+        for attempt in range(settings.llm_max_retries + 1):
+            try:
+                stats.incr("llm_requests")
+                async with self._http.stream(
+                    "POST", "/chat/completions", json=payload
+                ) as resp:
+                    if resp.status_code in RETRYABLE_STATUS:
+                        # 先排干响应体（连接回归连接池可复用）再按可重试错误处理
+                        await resp.aread()
+                        raise LLMError(f"retryable status {resp.status_code}")
                     try:
-                        obj = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = obj.get("choices") or []
-                    if choices:
-                        delta = choices[0].get("delta", {}).get("content")
-                        if delta:
-                            stats.incr("completion_tokens", 0)  # 流式无 usage，token 见估算
-                            yield delta
-        except (httpx.TimeoutException, httpx.TransportError) as e:
-            stats.incr("llm_failures")
-            raise LLMError(f"流式请求失败: {e}") from e
+                        resp.raise_for_status()
+                    except httpx.HTTPStatusError as e:
+                        # 非重试型 HTTP 错误（鉴权/参数/无权限）统一包装为 LLMError，
+                        # 与 _post_with_retry 同契约，不裸抛 httpx 异常
+                        await resp.aread()
+                        stats.incr("llm_failures")
+                        raise LLMError(
+                            f"HTTP {resp.status_code}: {resp.text[:200]}"
+                        ) from e
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[len("data:") :].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = obj.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta", {}).get("content")
+                            if delta:
+                                stats.incr("completion_tokens", 0)  # 流式无 usage，token 见估算
+                                yielded = True
+                                yield delta
+            except (httpx.TimeoutException, httpx.TransportError, LLMError) as e:
+                if yielded or attempt >= settings.llm_max_retries:
+                    stats.incr("llm_failures")
+                    if yielded:
+                        # 中途（首字节后）失败：语义与旧实现一致，绝不重试
+                        raise LLMError(f"流式请求失败: {e}") from e
+                    raise LLMError(
+                        f"LLM 流式请求失败（已重试 {settings.llm_max_retries} 次）: {e}"
+                    ) from e
+                # 首字节前：与 _post_with_retry 同口径指数退避后重试
+                stats.incr("llm_retries")
+                jitter = random.uniform(0, 0.3)
+                await asyncio.sleep(delay + jitter)
+                delay *= 2
 
     # ---------- 结构化输出（带自校验纠错） ----------
 

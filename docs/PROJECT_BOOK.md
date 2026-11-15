@@ -21,7 +21,7 @@
 
 ### 0.4 简历一句话版
 
-跨城市社保公积金 Agentic RAG（LangGraph CRAG+手写混合检索+FC 计算+忠实度拒答）：v2 90 题真模型 93.3%（refuse 12/12 零编造）、v1 33 题 100%（33/33）、检索 recall@5 97.9%/97.2%、废止文件零泄漏、故障注入 61 次编造=0、73 项 pytest；评测驱动修出黑话扩展 df 命中≈0 的上线级真 bug。
+跨城市社保公积金 Agentic RAG（LangGraph CRAG+手写混合检索+FC 计算+忠实度拒答）：v2 90 题真模型 93.3%（refuse 12/12 零编造）、v1 33 题 100%（33/33）、检索 recall@5 97.9%/97.2%、废止文件零泄漏、故障注入 61 次编造=0、77 项 pytest；评测驱动修出黑话扩展 df 命中≈0 的上线级真 bug。
 
 ---
 
@@ -99,7 +99,7 @@ flowchart TB
 
 ### 4.1 `tests/`（先读规格）
 带着问题：mock 替身怎么继承真实客户端？判分按题型怎么分？
-**动手**：`POLICY_COMPASS_FORCE_MOCK=1 python -m pytest tests/ -q`（73 项全绿，零 key）。
+**动手**：`POLICY_COMPASS_FORCE_MOCK=1 python -m pytest tests/ -q`（77 项全绿，零 key）。
 
 ### 4.2 `app/retrieval/bm25.py`（检索的地基）
 **自测题**：① idf 饱和是什么、公式里哪个参数压住它？② `tokenize` 为什么词+bigram 双通道都要？③ `search_weighted` 的词权入口给谁用？
