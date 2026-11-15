@@ -229,3 +229,17 @@ python scripts/serve.py             # http://127.0.0.1:8000
 **复测与冻结口径（全量，CI 同环境变量）**：pytest **61→64 全绿**（+3：挤占四档存活率断言/oos 哨兵门禁/哨兵词面单元）；注入评测 **18/18**（证据存活 10/10、关键词存活 8/10、载荷命中 0、对抗穿透 0/18、oos 拒答 4/4）；冻结口径**逐字复现**——v1 mock **84.9%**（28/33，失败集 #1/6/22/27/28 一致）/ v2 mock **91.1%**（82/90，失败集 #105/129/131/167/177/179/183/189 一致）/ usage 签名（refusals 4/11、tool_calls 6/19）一致 / recall@5 当前配置 92.0·93.8 / BM25-only 消融行 98.3·96.5 与 **97.9·97.2**（后者即 EVIDENCE PC-HR2 节"recall@5 97.9·97.2"的口径——v2 BM25-only 消融行，向量无关故 mock/real 同值；当前配置哈希向量腿口径 93.8 即该节括号注记，全部对账吻合，无文档漂移）。复现命令：`POLICY_COMPASS_FORCE_MOCK=1 EMBED_ENABLED=false RERANK_ENABLED=false python scripts/eval.py [--eval-set data/eval_set_v2.jsonl]` 与 `python scripts/eval_injection.py`。
 
 **诚实边界**：信任降权只作用于命中模式库的块（不抗变形注入/无载荷纯堆砌块——后者无载荷不构成注入面，噪声排序由元数据加权天然压制）；哨兵表覆盖 37 个主要城市，表外小城市 oos 问题行为同现状；挤占实测基于本对抗语料 6 份的形态，更强对手（模拟文号/城市元数据的毒块）未构造——元数据门禁（PC-3 写入面）与后续上游校验为对应纵深。
+
+### POLICY 批次（2026-11-16，评审 4.0 八项确认修复，1B3-PC 车道）
+
+评审 4.0（interview/reviews/review_report_4.md 附录 C）确认的 8 条 P1 逐条修复，一问题一提交带编号，每修配回归，冻结口径逐笔复验无扰动：
+
+- **POLICY-1**（2f338dc）get_llm 进程级缓存单例：修检索热路径每查询新建 LLMClient（独立 httpx 连接池无人 aclose，真实 embedding 部署 FD 随累计请求增长）——配置签名缓存+签名失配重建+lifespan 关闭后 reset。
+- **POLICY-2**（8c2145e）图去跨请求 checkpointer：MemorySaver 按全新 uuid thread 累积完整图状态永不淘汰直至 OOM（全仓零 get_state 读取方，多轮记忆契约本就是调用方显式传 history）——checkpointer=None，thread_id 降级为 trace 关联。
+- **POLICY-3**（c3c69e9）OCR 残缺结果不落缓存：全部尝试页成功才写缓存，失败页抛 LLMError 由上层单文档收容、下次 sync 自动重试（此前一次瞬时失败固化为永久残缺语料）。
+- **POLICY-4+6**（17b4540）compose 开关透传（EMBED_ENABLED/RERANK_ENABLED 此前漏白名单，.env 生产口径 docker 路径静默失效）+ 卷/语料分层（命名卷挂 /app/data 遮蔽镜像内语料致热更新链路失效——改挂 /app/runtime 只放索引/trace，DB_PATH/TRACE_DIR 环境变量指路，语料随镜像层走）。
+- **POLICY-5**（72673bd）摄取失败路径收容：单文档 embed/OCR 失败与 PC-HR1 解析失败语义同级（保留旧版可检/errors 留痕/不推进快照），main.py 启动改无条件增量 sync——此前首启单文档失败炸 lifespan 成崩溃循环、半库提交后重启"非空即跳过"静默服务。
+- **POLICY-7**（ee1d089）embed 独立端点/密钥生效：EMBED_API_BASE/KEY 此前是死配置（effective_embed_* 零运行时消费者），/embeddings 永远打 LLM 端点——同端点复用主连接池、不同端点建独立客户端，MockTransport 实证路由。
+- **POLICY-8**（787de0d）文档测试数三口径漂移（23/29/57）统一回填+RESUME 语料构成更正（16 真实+7 演示）+test_doc_test_count_matches_suite 把 README 徽章数钉死为测试函数实际计数（再漂移即红，新增测试须同步徽章——本批即按此纪律逐笔 bump 65→71）。
+
+**回归**：pytest **61→71 全绿**（+10：单例生命周期/OCR 缓存语义/摄取收容/embed 端点路由/compose 解析钉死/文档计数守门/挤占三测在前批）。**冻结口径逐笔复验**：v1 mock 84.9% / v2 mock 91.1% / recall@5 92.0·93.8 / 消融 97.9·97.2 / usage 签名 / 注入 18/18 全程逐字无扰动（mock 链路零改动：POLICY-1/2/3/5/7 的修复路径在 mock 下不触发的自然属性 + 每笔提交后复测）。POLICY-9/10（P2 未独立复核）不在本批范围，如实留档。
