@@ -1,10 +1,13 @@
 """混合检索：BM25 + 向量双路召回 → RRF 融合 → 业务元数据加权 → rerank。
 
-三个业务驱动的排序信号（通用 RAG demo 通常缺失）：
+四个业务驱动的排序信号（通用 RAG demo 通常缺失）：
 1. 城市匹配加权：同名政策各地标准不同，命中路由城市 ×1.8；
 2. 领域匹配加权：公积金/社保混检时 ×1.3；
 3. 时效降权：已废止政策 ×0.3 保留可检索（可回答"政策变了什么"），
-   但正常问答不会排在现行文件之前。
+   但正常问答不会排在现行文件之前；
+4. 注入信任降权：命中注入模式库的块 ×injection_trust_penalty 沉底
+   （1B3-PC 挤占修复，防关键词堆砌毒块占用 top-k；正式语料零命中，
+   冻结口径不受扰动，见 app/agent/injection.py 与 evidence 报告 §4）。
 
 并行设计：查询 embedding（网络 IO）与 BM25 打分（CPU）用 asyncio.gather +
 to_thread 并行，检索整体延迟 ≈ max(两路) 而非求和。
@@ -44,6 +47,9 @@ class ScoredChunk:
     vector_rank: int | None = None
     rerank_score: float | None = None
     final_score: float = 0.0
+    # 命中注入模式库（app/agent/injection.py，PC-HR2）：检索融合层信任降权依据，
+    # 下游 retrieve_node 的行级消毒与 grade=0 隔离以此同源（1B3-PC 挤占修复）
+    injection_flagged: bool = False
 
     def citation(self) -> str:
         parts = [self.chunk.title]
@@ -166,7 +172,11 @@ class HybridRetriever:
                 for rank, (idx, score) in enumerate(pairs):
                     sc = by_idx[idx]
                     sc.rerank_score = score
-                    sc.final_score = score
+                    # rerank 分替代融合分：注入信任降权必须重施，否则重排序
+                    # 会洗掉融合层的惩罚、毒块重回 top-k（1B3-PC 挤占修复）
+                    sc.final_score = score * (
+                        settings.injection_trust_penalty if sc.injection_flagged else 1.0
+                    )
                 result.chunks = sorted(
                     (by_idx[i] for i, _ in pairs), key=lambda sc: sc.final_score, reverse=True
                 )[:top_k]
@@ -243,6 +253,8 @@ class HybridRetriever:
         )
 
         q_terms = cjk_bigrams(query)
+        from ..agent.injection import scan_lines  # 局部导入：模式库为 agent/retrieval 共用安全组件
+
         for sc in fused.values():
             score = sc.fused_score
             if city and city != "全国" and sc.chunk.city == city:
@@ -257,6 +269,15 @@ class HybridRetriever:
             overlap = len(q_terms & title_terms)
             if q_terms and overlap >= 4 and overlap / len(q_terms) >= 0.25:
                 score *= settings.title_match_boost
+            # 注入信任降权（1B3-PC，PC-HR2 挂账修复）：命中注入模式库的块在检索
+            # 融合层即沉底——防关键词堆砌毒块挤占 top-k（可用性 DoS，
+            # evidence/prompt_injection_report.md §4）。零漂移论证：模式库对正式
+            # 语料零命中（tests/test_injection.py 守门），乘数对正式块恒不生效，
+            # 冻结口径检索结果不受扰动；此后隔离文档仍走 grade=0 双保险。
+            sc.injection_flagged = bool(scan_lines(sc.chunk.text))
+            if sc.injection_flagged:
+                score *= settings.injection_trust_penalty
+                stats.incr("injection_retrieval_downweighted")
             if not sc.chunk.is_valid:
                 score *= settings.invalid_doc_penalty
             sc.final_score = score if sc.rerank_score is None else sc.final_score

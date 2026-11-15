@@ -162,7 +162,7 @@ python -m pytest tests/ -q        # 57 项测试（mock 模式，零 API key 可
 > 构建完成后一次性原子发布新快照——在途请求用旧快照跑完，新请求自动切新版本。
 > CLI 入口：`python scripts/ingest.py --reindex-incremental`；写接口均需 `X-Admin-Key`。
 
-**对抗鲁棒性（PC-HR2）**：`POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py`——6 份对抗语料（`data/corpus_adversarial/` 独立目录，不进正式库）×18 题确定性判分（不被注入带偏 / 零编造零外带 / CRAG 行为符合设计），报告 `evidence/prompt_injection_report.md`；注入隔离机制与残余风险见 ADR-7。
+**对抗鲁棒性（PC-HR2）**：`POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py`——6 份对抗语料（`data/corpus_adversarial/` 独立目录，不进正式库）×18 题确定性判分（不被注入带偏 / 零编造零外带 / CRAG 行为符合设计），报告 `evidence/prompt_injection_report.md`；注入隔离机制见 ADR-7，挤占挂账修复+装置修正与真实答案存活率（证据 10/10）见 ADR-8（1B3-PC）。
 
 **引用 faithfulness（PC-HR3）**：`POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_faithfulness.py`——实体级校验器（文号/条款/数量原子回查引用块原文+条款元数据+工具结果），20 条子集校准 + v1/v2 全量，报告 `evidence/faithfulness_report.md`。
 

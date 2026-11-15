@@ -52,12 +52,17 @@ class VerifyResult(BaseModel):
 
 def make_nodes(retriever, llm):
     async def route_node(state: AgentState) -> dict:
-        from .router import route_query
+        from .router import route_query, unsupported_place
 
         t0 = time.perf_counter()
         route = await route_query(llm, state["question"], state.get("messages", [])[:-1])
+        rd = route.model_dump()
+        # oos 城市哨兵（1B3-PC）：确定性词面判定，独立于 LLM/规则/mock 路由口径
+        # 统一叠加——覆盖外主要城市问题不得由他城/全国文件顶答（graph._after_grade
+        # 门禁直落诚实拒答）。trace 事件照常携带路由字段，哨兵结果入 route dict。
+        rd["oos_place"] = unsupported_place(state["question"])
         return {
-            "route": route.model_dump(),
+            "route": rd,
             "query": state["question"],
             "retrieval_round": 0,
             "generation_attempts": 0,
@@ -65,7 +70,7 @@ def make_nodes(retriever, llm):
             "events": [
                 _ev(
                     "route",
-                    **route.model_dump(),
+                    **rd,
                     latency_ms=round((time.perf_counter() - t0) * 1000, 1),
                 )
             ],

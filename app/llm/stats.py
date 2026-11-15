@@ -32,6 +32,7 @@ class Stats:
     refusals: int = 0  # 走到诚实拒答分支的次数
     tool_calls: int = 0
     injection_quarantined_lines: int = 0  # 注入隔离剔除的行数（PC-HR2）
+    injection_retrieval_downweighted: int = 0  # 检索融合层信任降权命中的块数（1B3-PC 挤占修复）
 
     _lock = threading.Lock()
 

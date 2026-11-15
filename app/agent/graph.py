@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 
 def _after_grade(state: AgentState) -> Literal["tool", "generate", "rewrite", "fallback"]:
+    # oos 城市哨兵门禁（1B3-PC）：问题点名覆盖外主要城市时，本地细则必然缺失，
+    # 他城/全国文件顶答=张冠李戴（编造同罪）；改写轮无法创造语料覆盖，
+    # 直落诚实拒答是唯一诚实行为。检索与评分照常执行（trace 可观测），
+    # 评分结果仅用于 fallback 提示"最接近文件"。先红后绿实证见 tests/test_injection.py。
+    if (state.get("route") or {}).get("oos_place"):
+        return "fallback"
     docs = [d for d in state.get("documents", []) if d.get("grade") is not None]
     max_grade = max((d["grade"] for d in docs), default=0.0)
     if max_grade >= settings.grade_threshold:

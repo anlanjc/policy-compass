@@ -42,6 +42,32 @@ DOMAIN_KEYWORDS = {
 CALC_PAT = ("余额", "月薪", "缴了", "缴存", "能贷", "贷多少", "额度", "多少",
             "几万", "月供")
 
+# 覆盖外主要城市哨兵表（1B3-PC，PC-HR2 挤占修复的伴生守卫）：毒块挤占修复后，
+# 库外城市问题不再被"毒块挤占→拒答"的悲观行为掩盖，他城/全国文件会真实进入
+# top-k——若无守卫，"天津租房提取额度"会被北京/成都文件顶答（张冠李戴=编造，
+# 与 tool_node 防猜守卫同源，先红后绿实证见 tests/test_injection.py）。
+# 取舍：jieba ns 地名识别对泛称误报（"三城/城市"实测误伤冻结题 #139/#177），
+# 哨兵表零误报、只封高频对手面；表外小城市行为同现状（诚实边界，留档）。
+OOS_MAJOR_CITIES = frozenset({
+    "天津", "重庆", "苏州", "宁波", "南京", "武汉", "西安", "郑州", "长沙",
+    "青岛", "大连", "厦门", "福州", "济南", "合肥", "昆明", "沈阳", "哈尔滨",
+    "石家庄", "南昌", "贵阳", "南宁", "兰州", "太原", "长春", "无锡", "佛山",
+    "东莞", "珠海", "温州", "绍兴", "嘉兴", "常州", "烟台", "潍坊", "洛阳",
+})
+
+
+def unsupported_place(question: str) -> bool:
+    """问题点名覆盖外主要城市且未命中任何支持城市 → True（oos 哨兵）。
+
+    确定性词面判定，独立于 LLM/规则/mock 三种路由口径统一叠加（nodes.route_node
+    合并进 route dict，graph._after_grade 据此门禁直落诚实拒答——改写轮无法
+    创造语料覆盖，拒答是唯一诚实行为）。命中支持城市时一律 False：多城对比、
+    别名等由既有城市加权与系统提示词规则接管。
+    """
+    if any(c in question for c in settings.cities if c != "全国"):
+        return False
+    return any(name in question for name in OOS_MAJOR_CITIES)
+
 
 def rule_based_route(question: str) -> RouteResult:
     """确定性规则路由：LLM 不可用时的兜底，也是路由正确性的对照组。"""

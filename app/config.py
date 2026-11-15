@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     domain_match_boost: float = 1.3  # 命中领域元数据的加成
     title_match_boost: float = 1.6  # 政策标题(事项名)与查询核心词重叠≥40% 的加成
     invalid_doc_penalty: float = 0.3  # 已废止政策得分乘数（保留可检索但强降权）
+    # 注入信任降权（1B3-PC，PC-HR2 挂账修复）：命中注入模式库的块在检索融合层
+    # 乘此系数沉底——防关键词堆砌毒块挤占 top-k（可用性 DoS，
+    # evidence/prompt_injection_report.md §4）。零漂移论证：模式库对正式语料 23 份
+    # md+OCR 缓存全文零命中（tests/test_injection.py 永久守门），乘数对正式块恒不
+    # 生效 → 冻结口径检索结果不受扰动；此后隔离文档仍走 grade=0 双保险。
+    injection_trust_penalty: float = 0.3
 
     # ---------- Agentic 编排 ----------
     grade_threshold: float = 0.5  # LLM 文档相关性打分阈值（0~1）
