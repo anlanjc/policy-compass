@@ -116,3 +116,39 @@ def test_schema_migration_from_old_db(tmp_path):
         assert old and old[0].text == "旧正文" and old[0].sections == []
     finally:
         store.close()
+
+
+def test_pack_fills_chunk_title():
+    """splitter._pack 必须给 Chunk.title 赋值（1B4 quirk 修复钉死）。
+
+    历史 quirk（2026-11-06 S1 留档、2026-11-18 真修复）：_pack 构造 Chunk 时
+    从不赋值 title（恒为默认 ""），_ingest 的 f"{c.title}\n{c.text}" 实产出
+    "\n"+正文——标题仅经 text 首行《标题》进入向量输入。"""
+    chunks = split_policy_text(_article_doc(), "测试办法")
+    assert chunks
+    for c in chunks:
+        assert c.title == "测试办法"
+        assert c.text.startswith("《测试办法》")
+
+
+def test_ingest_embed_input_carries_title(tmp_path):
+    """embed 输入契约：f"{c.title}\n{c.text}" 的 title 必须真实进入输入首行。
+
+    落库向量口径随之改变（mock 哈希/真实同变），本测试钉住修复不回退：
+    输入首行=裸标题，第二行=《标题》正文头。"""
+    captured: list[list[str]] = []
+
+    async def embed(texts):
+        captured.append(list(texts))
+        return [[0.0] * 8 for _ in texts]
+
+    store = IndexStore(str(tmp_path / "idx.db"))
+    try:
+        n = asyncio.run(store.add_document("测试办法.md", _article_doc(), embed))
+        assert n > 0 and captured and captured[0]
+        assert len(captured[0]) == n
+        for t in captured[0]:
+            assert t.startswith("测试办法\n"), f"embed 输入缺标题前缀: {t[:20]!r}"
+            assert t.splitlines()[1].startswith("《测试办法》")
+    finally:
+        store.close()

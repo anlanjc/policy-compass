@@ -21,7 +21,7 @@
 
 ### 0.4 简历一句话版
 
-跨城市社保公积金 Agentic RAG（LangGraph CRAG+手写混合检索+FC 计算+忠实度拒答）：v2 90 题真模型 93.3%（refuse 12/12 零编造）、v1 33 题 100%（33/33）、检索 recall@5 97.9%/97.2%、废止文件零泄漏、故障注入 61 次编造=0、77 项 pytest；评测驱动修出黑话扩展 df 命中≈0 的上线级真 bug。
+跨城市社保公积金 Agentic RAG（LangGraph CRAG+手写混合检索+FC 计算+忠实度拒答）：v2 90 题真模型 93.3%（refuse 12/12 零编造）、v1 33 题 100%（33/33）、检索 recall@5 97.9%/97.2%、废止文件零泄漏、故障注入 61 次编造=0、79 项 pytest；评测驱动修出黑话扩展 df 命中≈0 的上线级真 bug。
 
 ---
 
@@ -99,7 +99,7 @@ flowchart TB
 
 ### 4.1 `tests/`（先读规格）
 带着问题：mock 替身怎么继承真实客户端？判分按题型怎么分？
-**动手**：`POLICY_COMPASS_FORCE_MOCK=1 python -m pytest tests/ -q`（77 项全绿，零 key）。
+**动手**：`POLICY_COMPASS_FORCE_MOCK=1 python -m pytest tests/ -q`（79 项全绿，零 key）。
 
 ### 4.2 `app/retrieval/bm25.py`（检索的地基）
 **自测题**：① idf 饱和是什么、公式里哪个参数压住它？② `tokenize` 为什么词+bigram 双通道都要？③ `search_weighted` 的词权入口给谁用？
@@ -143,7 +143,7 @@ eval.py 一键报告 / fault_inject.py 61 次注入 / load_test.py 压测 / abla
 
 **问 2：如果 BM25 已经很好，向量检索还有必要吗？**（字节真题，本项目消融直接回答）
 锚点：eval/runner.py:95 `ablation` + docs/ablation.md。
-答：不站队，消融说话：v2 78 题上 BM25 纯净 97.9%/BM25+业务加权 97.2%（MRR 0.949、废止泄漏 0，2026-11 复跑与冻结一致）；真实 embedding（text-embedding-v4）混合腿=recall@5 98.1%（+0.9pp）、**MRR 0.984（排序真增益）**、mock e2e +2.2pp——但**真模型同金标复验 v2 92.2%/v1 93.9%（vs 冻结 93.3%/100%），差异全为评分抖动误拒，方向反向**。**结论：保留架构与开关，生产默认维持 BM25-only——mock 判分器的 e2e 增益不可外推 real（真实模型对 rank2~3 鲁棒，排序增益不传导），这是消融的价值：让"要不要开向量"由数据而非直觉决定**（ablation.md §0/§4）。另有一个口径发现：FORCE_MOCK 环境下 mock 哈希向量腿实际在跑且拖低 recall@5 至 93.8%——**"BM25-only"必须分清生产口径（真关）与 mock 口径（哈希向量在跑）**，CI 门禁基线属后者，见 ablation.md §3。
+答：不站队，消融说话：v2 78 题上 BM25 纯净 97.9%/BM25+业务加权 97.2%（MRR 0.949、废止泄漏 0，2026-11 复跑与冻结一致）；真实 embedding（text-embedding-v4）混合腿=recall@5 98.1%（+0.9pp）、**MRR 0.984（排序真增益）**、mock e2e +2.2pp——但**真模型同金标复验 v2 92.2%/v1 93.9%（vs 冻结 93.3%/100%），差异全为评分抖动误拒，方向反向**。**结论：保留架构与开关，生产默认维持 BM25-only——mock 判分器的 e2e 增益不可外推 real（真实模型对 rank2~3 鲁棒，排序增益不传导），这是消融的价值：让"要不要开向量"由数据而非直觉决定**（ablation.md §0/§4）。另有一个口径发现：FORCE_MOCK 环境下 mock 哈希向量腿实际在跑且拖低 recall@5 至 93.8%（1B4 quirk 修复后 94.4%，历史口径 93.8 见 ablation.md §3 注记）——**"BM25-only"必须分清生产口径（真关）与 mock 口径（哈希向量在跑）**，CI 门禁基线属后者，见 ablation.md §3。
 
 **问 3：Agentic RAG 和传统 RAG 的区别到底是什么？**
 锚点：graph.py:36 `_after_grade` 条件边 + nodes.py rewrite/verify。
@@ -163,7 +163,7 @@ eval.py 一键报告 / fault_inject.py 61 次注入 / load_test.py 压测 / abla
 
 **问 7：mock 评测可信吗？mock 和 real 数字为什么差这么多？**
 锚点：llm/mock.py:35（继承 LLMClient 只覆写网络层）+ EVIDENCE §4 mock/real 分列。
-答：mock 验证的是**链路与判分机制**（编排/重试/工具调用在 CI 被完整执行），real 才是质量口径——两者严格分列从不混写（v2 mock 91.1% vs real 93.3%）。mock 的已知失真也诚实记录：抽形式判分有词面脆性（#177/#179/#189 三条 mock 失败真模型探针 5/5 通过）。**mock 的价值是回归裁判**：改动后 5 分钟确认老题不回归。
+答：mock 验证的是**链路与判分机制**（编排/重试/工具调用在 CI 被完整执行），real 才是质量口径——两者严格分列从不混写（v2 mock 92.2% vs real 93.3%，1B4 quirk 修复后口径；历史 91.1% 见 EVIDENCE 历史注记）。mock 的已知失真也诚实记录：抽形式判分有词面脆性（#177/#179/#189 三条 mock 失败真模型探针 5/5 通过）。**mock 的价值是回归裁判**：改动后 5 分钟确认老题不回归。
 
 **问 8：讲一个你评测驱动修出来的真 bug。**（高频叙事题，背熟）
 锚点：hybrid.py:80 `expand_query` 注释 + EVIDENCE §4 PC-3 节。

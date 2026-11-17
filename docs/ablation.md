@@ -42,6 +42,7 @@ e2e 失败集变化：v2 由 8 条（#105/129/131/167/**177**/179/183/**189**）
 - **配置组**（5 组）：bm25_only（纯净）/ bm25_production（生产加权、向量关）/ vector_only / hybrid_no_boost / hybrid_full（生产加权+向量，`vector_weight=0.8`，config.py:66）。前四组加权系数经"捕获-置 1.0-还原"隔离（eval/runner.py:95 `ablation` 同款机制）。
 - **真实向量注入**：`--phase embed` 原地 UPDATE chunks.embedding（输入逐字复刻 `_ingest` 的 `f"{c.title}\n{c.text}"`——注意 `splitter._pack` 从不赋值 Chunk.title，**生产 embed 输入实为 `"\n"+正文`**，标题经正文首行《标题》进入）。68 chunk、30,852 字符、7 次调用（DashScope 批量上限 10）、11.1s、维度 1024 与配置一致。
   **处置决定（主人 2026-11-06 委托按建议执行）**：当晚仅做代码注释如实化（indexer.py `_ingest`，行为零变更）；真正修复（输入改 `c.text`）会同时改变 FORCE_MOCK 哈希向量与真实向量 → 打包为后续批次（全量重摄取 + v1/v2 mock/real 复测 + 冻结口径回填 + 简历数字同步），避免作废 S5 正在回填的冻结 mock 数字。
+  **→ 历史注记（2026-11-18 1B4 批次已执行真修复）**：最终采行"补 `title=title` 赋值"（非本节早先建议的输入改 `c.text`——两者对"标题进向量"等价，但补赋值同时让 Chunk.title 数据类字段不再永久死置，且与 f-string 字面语义一致）；本节上表 S1 五组与 §4 real 复验数字均为**旧输入口径（"\n"+正文）的历史证据**，修复后未重嵌真向量（现金窗口，见 §7）；mock 侧已全量重摄取并回填新冻结口径（EVIDENCE 1B4 节对照表：v2 mock 91.1→92.2%、v1 84.9→87.9%、B 口径 recall@5 93.8→94.4/92.0→90.8、BM25 两行零变化）。
 - **混合腿**：`--phase hybrid` 进程内把 `app.llm.client.get_llm` 替换为"真 embed + mock chat"组合客户端（`RealEmbedMockChat`），chat 判分口径与冻结 mock 完全一致；查询向量逐条真实调用。app/ 源码零改动，闸门=必须存在 embed 产物（哈希向量同样非零，非零计数区分不了真假）。
 - **恢复口径**：`--phase restore_mock` 用 MockLLMClient.embed（md5 词袋哈希、无随机无网络）把库向量恢复为 FORCE_MOCK 哈希口径——恢复后 `eval.py` 复现 v1 84.9%/v2 91.1% **逐字一致**，冻结 mock 数字复现性不受实验影响。
 
@@ -52,7 +53,7 @@ e2e 失败集变化：v2 由 8 条（#105/129/131/167/**177**/179/183/**189**）
 | 口径 | 环境 | 查询向量腿 | recall@5 (v2) |
 |---|---|---|---|
 | A. 生产 BM25-only | 无 FORCE_MOCK + `EMBED_ENABLED=false` | 真实客户端落零向量→腿真空转（client.py:238） | 97.2%（加权） |
-| B. FORCE_MOCK 现行 | `POLICY_COMPASS_FORCE_MOCK=1`（**CI 门禁/e2e mock 同环境**） | **MockLLMClient.embed 不检查 embed_enabled→哈希词面向量腿实际在跑**（mock.py:79） | 93.8% |
+| B. FORCE_MOCK 现行 | `POLICY_COMPASS_FORCE_MOCK=1`（**CI 门禁/e2e mock 同环境**） | **MockLLMClient.embed 不检查 embed_enabled→哈希词面向量腿实际在跑**（mock.py:79） | 93.8%（1B4 quirk 修复后 **94.4%**，见 §7） |
 | C. 混合（真向量） | FORCE_MOCK + 真实 embed 客户端 | 真实 text-embedding-v4 | 98.1% |
 
 - **发现**：mock 哈希向量腿在 FORCE_MOCK 环境下**拖低** recall@5 约 3.4pp（93.8 vs 97.2）——mock 口径的端到端数字（91.1%）一直是"BM25+加权+哈希向量腿"的混合体，README「mock 模式下向量路退化为词面匹配」声明对应此状态。

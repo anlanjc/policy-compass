@@ -230,13 +230,17 @@ class IndexStore:
             with self._conn:
                 self._delete_doc(meta.doc_id)
             return
-        # embed 输入口径（2026-11-06 如实化注释，行为零变更）：
-        # splitter._pack 构造 Chunk 时从不赋值 title（恒为默认 ""），故本行的
-        # f"{c.title}\n{c.text}" 实际产出 "\n"+正文——标题经 text 首行《标题》进入，
-        # 功能无损；全库既有向量（含 FORCE_MOCK 哈希向量）均按此口径计算，
-        # 冻结评测数字以其为前提。若要改为纯 c.text（消除冗余换行前缀），
-        # 会同时改变哈希向量与真实向量 → 必须捆绑：全量重摄取 + v1/v2 mock/real
-        # 全量复测 + 冻结口径回填 + 简历数字同步（消融报告 ablation.md §2 有记录）。
+        # embed 输入口径（2026-11-18 1B4 quirk 真修复后）：f"{c.title}\n{c.text}" 中
+        # c.title 由 splitter._pack 真实赋值（=meta.title）——输入为
+        # "标题\n《标题》\n正文"（标题词元在向量输入中出现两次：裸标题前缀 +
+        # 正文首行书名号，BM25 词面信号与向量信号各自独立注入，属设计内冗余）。
+        # 历史 quirk（2026-11-06 S1 留档）：_pack 从不赋值 title（恒为 ""），输入
+        # 实为 "\n"+正文，标题仅经 text 首行进入——功能无损但与 f-string 语义
+        # 不符，修复处置留档 ablation.md §2。修复同时改变全库向量（mock 哈希与
+        # 真实同变）→ 已捆绑执行：全量重摄取（FORCE_MOCK 哈希口径，零现金）+
+        # v1/v2 mock 全量复测 + 冻结口径回填（EVIDENCE/README/PROJECT_BOOK/
+        # RESUME 1B4 节，旧口径数字保留历史注记）；真实向量重嵌与 real 口径
+        # 复验属现金账，留审批窗口（ablation.md §7）。
         vectors = embed_fn([f"{c.title}\n{c.text}" for c in pieces])
         if hasattr(vectors, "__await__"):
             vectors = await vectors

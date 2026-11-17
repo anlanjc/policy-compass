@@ -132,12 +132,13 @@ async def phase_embed(approved: bool) -> None:
     real = LLMClient()
     store = IndexStore()
     rows = store._conn.execute(
-        "SELECT chunk_id, text FROM chunks ORDER BY doc_id, seq"
+        "SELECT c.chunk_id, c.text, d.title FROM chunks c"
+        " JOIN docs d ON c.doc_id = d.doc_id ORDER BY c.doc_id, c.seq"
     ).fetchall()
-    # 逐字复刻 _ingest 的 embed 输入：f"{c.title}\n{c.text}"——注意 splitter._pack
-    # 构造 Chunk 时从不赋值 title（恒为默认 ""），故生产输入实为 "\n"+正文
-    # （标题经 text 首行《标题》进入，功能无损，冗余前缀 quirk 记入 ablation.md）
-    inputs = ["\n" + r[1] for r in rows]
+    # 逐字复刻 _ingest 的 embed 输入：f"{c.title}\n{c.text}"——2026-11-18 1B4 起
+    # splitter._pack 真实赋值 Chunk.title（修复前恒 ""，输入为 "\n"+正文，
+    # quirk 历史注记见 ablation.md §2 与 §7）
+    inputs = [f"{title}\n{text}" for _, text, title in rows]
     chars = sum(len(t) for t in inputs)
     # DashScope text-embedding-v4 批量上限 10（实测 400 InvalidParameter），
     # config.embed_batch_size=32 是 OpenAI/SiliconFlow 口径——本阶段钳到 10，查询侧单条不受影响
@@ -184,9 +185,10 @@ async def phase_restore_mock() -> None:
     mock = MockLLMClient()
     store = IndexStore()
     rows = store._conn.execute(
-        "SELECT chunk_id, text FROM chunks ORDER BY doc_id, seq"
+        "SELECT c.chunk_id, c.text, d.title FROM chunks c"
+        " JOIN docs d ON c.doc_id = d.doc_id ORDER BY c.doc_id, c.seq"
     ).fetchall()
-    inputs = ["\n" + r[1] for r in rows]  # 逐字复刻 _ingest：Chunk.title 恒空 → "\n"+正文
+    inputs = [f"{title}\n{text}" for _, text, title in rows]  # 逐字复刻 _ingest（1B4 修复后：title 真实赋值）
     vecs = await mock.embed(inputs)  # md5 词袋哈希，无随机、无网络
     with store._conn:
         store._conn.executemany(

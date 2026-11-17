@@ -243,3 +243,37 @@ python scripts/serve.py             # http://127.0.0.1:8000
 - **POLICY-8**（787de0d）文档测试数三口径漂移（23/29/57）统一回填+RESUME 语料构成更正（16 真实+7 演示）+test_doc_test_count_matches_suite 把 README 徽章数钉死为测试函数实际计数（再漂移即红，新增测试须同步徽章——本批即按此纪律逐笔 bump 65→71）。
 
 **回归**：pytest **61→71 全绿**（+10：单例生命周期/OCR 缓存语义/摄取收容/embed 端点路由/compose 解析钉死/文档计数守门/挤占三测在前批）。**冻结口径逐笔复验**：v1 mock 84.9% / v2 mock 91.1% / recall@5 92.0·93.8 / 消融 97.9·97.2 / usage 签名 / 注入 18/18 全程逐字无扰动（mock 链路零改动：POLICY-1/2/3/5/7 的修复路径在 mock 下不触发的自然属性 + 每笔提交后复测）。POLICY-9/10（P2 未独立复核）不在本批范围，如实留档。
+
+### 1B4（2026-11-18，1B4-PC 车道）embed 输入 quirk 真修复：全量重摄取 + 新冻结口径落档
+
+S1（2026-11-05/06）留档的 embed 输入 quirk 本批真修复：`splitter._pack` 构造 Chunk 从不赋值 `title`（恒为默认 ""），`_ingest` 的 `f"{c.title}\n{c.text}"` 实产出 `"\n"+正文`——标题仅经 text 首行《标题》进入向量输入，功能无损但与 f-string 字面语义不符。**修复=补 `title=title` 赋值（根因修法，实读后选定：备选"_ingest 输入改 meta.title"产出字符串完全相同但留下永久死字段，弃）**；`_ingest` 输入语义成为其字面形态：`"标题\n《标题》\n正文"`（标题词元两次进入向量输入——裸标题前缀+正文首行书名号，BM25 词面信号与向量信号各自独立注入，属设计内冗余；meta.title 为空的脏文档退回旧行为 `"\n"+正文`）。同步：`scripts/ablation_vector.py` 两处"逐字复刻 _ingest 输入"改为 `f"{title}\n{text}"`（JOIN docs 取标题）；indexer/_pack 注释改写为新契约。回归 +2 测试（77→79，先红后绿：`test_pack_fills_chunk_title`/`test_ingest_embed_input_carries_title` 修复前实证双红）。
+
+**捆绑协议执行（原留档契约逐项兑现）**：全量重摄取（删 `data/index.db*` 后 FORCE_MOCK 重建，23 文档/68 chunk，mock 哈希向量口径，零现金）→ 全口径复测 → 新冻结口径回填（README 徽章/表格、PROJECT_BOOK、RESUME、本文本节；**旧口径数字一律保留历史注记不追溯改写**）。
+
+**新旧冻结口径对照（mock 口径，2026-11-18 复测；旧值=POLICY 批次冻结）**：
+
+| 指标 | 旧冻结（quirk 未修） | 新冻结（quirk 修复后） | Δ 与归因 |
+|---|---|---|---|
+| v1 mock e2e（33 题） | **84.9%**（28/33，失败 #1/6/22/27/28） | **87.9%**（29/33，失败 #1/6/27/28） | **+3.0pp**；#22（黑话）被新哈希向量重排救回，其余失败逐项一致 |
+| v2 mock e2e（90 题） | **91.1%**（82/90，失败 #105/129/131/167/177/179/183/189） | **92.2%**（83/90，失败 #105/129/131/138/167/177/179） | **+1.1pp**；#183/#189 救回（S1 真向量消融同样救回的两条——标题信号入向量后 mock 哈希向量腿获得同向重排）；#138 新暴露：广州深圳对比题 top1 块更换后关键词"2000"不在 mock 抽取窗内——检索召回正确（recall=1.0），属已归因的 mock 抽取式判分脆性同类，净 +1 题 |
+| v1 当前配置 recall@5 / MRR（B 口径：BM25+加权+哈希向量腿） | 92.0% / 0.788 | 90.8% / 0.777 | **-1.2pp**；n=29 小样本 2 题翻转量级，与 S1 真向量消融 v1 负贡献（-1.1pp）同向——v1 集上标题双注入对向量排序轻微抢占（诚实记录，不作调参依据） |
+| v2 当前配置 recall@5 / MRR（B 口径） | 93.8% / 0.885 | **94.4%** / 0.893 | **+0.6pp**；标题入向量后哈希向量腿与 BM25 融合更一致 |
+| BM25 消融两行（v1 纯净/加权；v2 纯净/加权） | 98.3/96.5；97.9/97.2 | **98.3/96.5；97.9/97.2** | **零变化**（不变量实证：chunk 正文逐字节不变，BM25 与向量无关） |
+| usage 签名 | refusals 4/11、tool_calls 6/19 | refusals 4/11、tool_calls 6/19 | 零变化 |
+| 注入对抗评测 | 18/18 | **18/18** | 零变化（`evidence/prompt_injection_postquirk.md`，历史报告保留） |
+| faithfulness | v1 277/277、v2 599/599 双 100% | v1 277/277、**v2 606/606** 双 100% | v2 原子数 +7（#183/#189 答案变长多引数字）、未支持仍 0（`evidence/faithfulness_postquirk.md`，历史报告保留） |
+| pytest | 77 全绿 | **79 全绿** | +2（quirk 修复回归钉） |
+
+**回归子集复验（mock 口径，零现金 sanity）**：`eval_loan_regress_v1` 100%（8/8）、`eval_loan_regress_v2` 100%（10/10）、`eval_corpus_regress_v1` 100%（4/4）、`eval_loan_regress_v2b` 50%（1/2，#129 属旧冻结失败集成员、非新回归）。
+
+**诚实边界**：①本批**零现金**——真实向量（text-embedding-v4）在修复后输入口径下的重嵌与 real 口径全量复验未做，留审批现金窗口（S1 的 real/真向量消融数字均为旧输入口径的历史证据，对比结论"生产维持 BM25-only"待复验后再升级，见 ablation.md §7）；②agenteval 30 条 policy smoke 门禁基线锚在 B 口径（旧哈希向量）快照上，本批后 mock 输出漂移（92.2/87.9），**门禁基线重建为遗留项**（重建≠放水，逐条判读纪律见 ablation.md §3）；③#138 新失败未回改评测集金标（冻结评测集旧文件零字节纪律），真模型口径历史上对此类"关键词写法变体"鲁棒（冻结轮 3 条同类均属写法变体）。
+
+**新冻结口径复现命令**（旧命令的 --out 改为 postquirk 文件名，评测集与代码不变）：
+
+```bash
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --eval-set data/eval_set_v2.jsonl --out evidence/eval_v2_mock_postquirk.md   # 92.2%
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --out evidence/eval_v1_mock_postquirk.md                                     # 87.9%
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py                                                                    # 18/18（报告落 postquirk 文件，历史报告 git 保留）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_faithfulness.py                                                                 # v1 277/277、v2 606/606（同上）
+python -m pytest tests/ -q                                                                                                      # 79 passed
+```

@@ -154,7 +154,13 @@ def _split_units(lines: list[CleanLine]) -> list[Unit]:
 
 
 def _pack(units: list[Unit], title: str, chunk_size: int, overlap: int) -> list[Chunk]:
-    """把单元聚合为块：每块以标题开头，超长单元硬切并滑窗重叠。"""
+    """把单元聚合为块：每块以标题开头，超长单元硬切并滑窗重叠。
+
+    title 同时赋值 Chunk.title（1B4 quirk 修复，2026-11-18）：此前从不赋值
+    （恒为默认 ""），_ingest 的 f"{c.title}\\n{c.text}" 实产出 "\\n"+正文——
+    标题仅经 text 首行《标题》进入向量输入（S1 消融留档 quirk）。修复改变
+    全库向量（mock 哈希与真实同变），捆绑全量重摄取+全口径复测，见
+    indexer._ingest 注释与 EVIDENCE 1B4 节。"""
     chunks: list[Chunk] = []
     buf: list[Unit] = []
     buf_len = 0
@@ -174,6 +180,7 @@ def _pack(units: list[Unit], title: str, chunk_size: int, overlap: int) -> list[
             Chunk(
                 seq=len(chunks),
                 text=f"《{title}》\n" + "\n".join(u for u, _, _ in buf),
+                title=title,
                 sections=sections,
                 pages=pages,
             )
