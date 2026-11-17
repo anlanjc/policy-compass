@@ -12,6 +12,7 @@
          产出五组消融（补生产 BM25 对照）+ 端到端 mock v1/v2。
 
 结果落 evidence/ablation_<phase>.json。口径解读与 CI 门禁基线关系见 docs/ablation.md。
+mock4（1B4 任务二）：FORCE_MOCK 哈希向量口径四组+生产对照复跑+双 e2e 臂，零现金（§7）。
 """
 
 from __future__ import annotations
@@ -101,6 +102,32 @@ async def _run_set(store: IndexStore, name: str, path: Path, hybrid: bool) -> di
     }
 
 
+async def _e2e_no_vec(store: IndexStore, name: str, path: Path) -> dict:
+    """e2e 对照臂：生产 BM25 口径（向量腿关闭、业务加权开），mock 判分确定性。"""
+    from app.agent import PolicyAgent
+    from app.llm.client import get_llm
+    from app.eval.runner import eval_end2end, load_eval_set
+    from app.retrieval import HybridRetriever
+
+    cases = load_eval_set(path)
+    retriever = HybridRetriever(store)
+
+    async def no_vec(q, k):
+        return []
+
+    retriever._vector_search = no_vec  # type: ignore[assignment]
+    agent = PolicyAgent(retriever, get_llm())
+    e2e = await eval_end2end(agent, cases)
+    return {
+        "total": e2e["total"],
+        "overall_pass_rate": e2e["overall_pass_rate"],
+        "fails": [
+            {"id": i["id"], "type": i["type"]}
+            for s in e2e["by_type"].values() for i in s["items"] if not i["pass"]
+        ],
+    }
+
+
 def _db_vector_state(store: IndexStore) -> tuple[int, int]:
     norms = np.linalg.norm(store.matrix, axis=1)
     return len(store.chunks), int((norms > 0).sum())
@@ -171,6 +198,44 @@ async def phase_embed(approved: bool) -> None:
     })
     print(f"[embed] done: {usage}, nonzero rows after = {n_nonzero}/{n_total}")
     await real.close()
+
+
+async def phase_mock4() -> None:
+    """四组消融复跑——FORCE_MOCK 哈希向量口径（1B4 任务二，quirk 修复后，零现金）。
+
+    与 S1 hybrid 阶段的区别：chat 与查询向量均走 MockLLMClient（哈希词袋、
+    确定性、零网络），库向量=quirk 修复后重摄取的哈希口径——回答"mock 判分
+    口径下向量腿增益是否复现"能零现金升级的部分仅此口径；真向量（text-
+    embedding-v4）口径需重嵌+复验，属现金窗口，见 docs/ablation.md §7。
+    五组=runner 四组（bm25_only/vector_only/hybrid_no_boost/hybrid_full）+ 生产
+    BM25 对照（加权开、向量关），与 _run_set(hybrid=True) 同构。
+    """
+    from app.llm.client import get_llm
+
+    assert settings.embed_enabled, (
+        "mock4 阶段要求 EMBED_ENABLED=true（命令行覆盖 .env 的 false）——"
+        "runner 四组分支以此为闸；FORCE_MOCK 下 mock embed 不打真实 API，零现金"
+    )
+    llm = get_llm()
+    store = IndexStore()
+    await store.sync(None, llm.embed, llm=llm)  # hash 未变全跳过，零副作用
+    out = {"phase": "mock4",
+           "env": {"force_mock": True, "embed_enabled": True,
+                   "note": "哈希向量口径：库向量=修复后重摄取哈希向量，查询向量=MockLLMClient.embed 哈希；零现金"},
+           "sets": [
+               await _run_set(store, "v1", EVAL_V1, hybrid=True),
+               await _run_set(store, "v2", EVAL_V2, hybrid=True),
+           ]}
+    # 对照臂：生产 BM25 口径（向量腿关、加权开）的 e2e——mock 判分下
+    # "向量腿对端到端的贡献"。S1 §1 表 e2e 列（91.1%/84.9% 冻结值）实为
+    # B 口径（哈希向量腿在跑），与该行检索配置不同轴（§3 如实记录）；本臂拆直。
+    for s, path in zip(out["sets"], (EVAL_V1, EVAL_V2)):
+        s["e2e_bm25_production"] = await _e2e_no_vec(store, s["eval_set"], path)
+        print(f"[mock4] {s['eval_set']} e2e_bm25_production: "
+              f"{s['e2e_bm25_production']['overall_pass_rate']:.1%} "
+              f"fails={[f['id'] for f in s['e2e_bm25_production']['fails']]}")
+    _dump("ablation_mock4_postquirk.json", out)
+    _print(out)
 
 
 async def phase_restore_mock() -> None:
@@ -271,7 +336,7 @@ def _print(out: dict) -> None:
 
 async def main_async() -> int:
     ap = argparse.ArgumentParser(description="向量腿消融三阶段（bm25/embed/hybrid）")
-    ap.add_argument("--phase", choices=["bm25", "embed", "hybrid", "restore_mock"], required=True)
+    ap.add_argument("--phase", choices=["bm25", "embed", "hybrid", "restore_mock", "mock4"], required=True)
     ap.add_argument("--approved", action="store_true",
                     help="embed 阶段的批准显式开关（等价 AB_APPROVED=1 环境变量）")
     args = ap.parse_args()
@@ -281,6 +346,8 @@ async def main_async() -> int:
         await phase_embed(approved=args.approved or os.environ.get("AB_APPROVED") == "1")
     elif args.phase == "restore_mock":
         await phase_restore_mock()
+    elif args.phase == "mock4":
+        await phase_mock4()
     else:
         await phase_hybrid()
     return 0

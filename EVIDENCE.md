@@ -277,3 +277,5 @@ POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py                    
 POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_faithfulness.py                                                                 # v1 277/277、v2 606/606（同上）
 python -m pytest tests/ -q                                                                                                      # 79 passed
 ```
+
+**1B4 任务二（同日提交）消融 v2 复跑（mock 判分口径，零现金）**：脚本新增 `--phase mock4`（哈希向量口径四组+生产对照+e2e 双臂），五组检索表与 e2e 双臂见 `evidence/ablation_v2_postquirk.md`（原始数据 `ablation_mock4_postquirk.json`）。要点：BM25 两行与冻结值逐格一致（不变量实证）；哈希向量腿拖低 recall@5（v1 -5.7pp/v2 -2.8pp）且 e2e 双臂反向（v1 +3.0pp/v2 -2.2pp，噪声量级）——S1 的 mock +2.2/+3.0pp 实为"真向量 vs 哈希向量"之差，本轮零现金答案=哈希腿**不构成可复现增益**；首次给出真"向量关"e2e 臂（v2 生产 BM25 mock e2e 94.4%，比 CI 门禁 B 口径冻结值高 2.2pp——哈希腿 e2e 拖累首次量化）。生产决策不变（维持 BM25-only 默认）；修复后输入口径的真向量重嵌与真模型复验留现金窗口（ablation.md §7 如实标注）；agenteval 门禁基线重建为遗留项。
