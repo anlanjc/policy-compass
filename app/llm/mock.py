@@ -342,7 +342,11 @@ class MockLLMClient(LLMClient):
             return overlap + num_bonus + concl_bonus
 
         parts = ["根据现行政策文件，为您整理如下："]
-        for i, lines in list(chunks.items())[:3]:
+        # 全量块读取：生成上下文（top_k_final=5）已过 grade>=0.4 相关性闸，mock
+        # 抽取式生成应与真实模型职责对齐——读完整个参考资料再选关键句。
+        # 此前只取前 3 块，对检索排序脆性（v2 #138 实测：广州块排在第 5 位时
+        # 落在窗外，"2000"额度句永无机会进答案，而检索 recall=1.0）。
+        for i, lines in chunks.items():
             content_lines = [
                 l for l in lines
                 if not l.startswith("《") and "现行有效" not in l and "已废止" not in l
@@ -355,10 +359,6 @@ class MockLLMClient(LLMClient):
             ranked = sorted(sentences, key=sent_score, reverse=True)
             digest = "。".join(ranked[:2])
             parts.append(f"{digest}。[{i}]")
-        parts.append(
-            "以上内容摘自知识库现行有效的政策文件，具体办理以当地公积金/社保中心为准。"
-        )
-        return "\n".join(parts)
         parts.append(
             "以上内容摘自知识库现行有效的政策文件，具体办理以当地公积金/社保中心为准。"
         )
