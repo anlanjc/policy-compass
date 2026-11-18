@@ -293,3 +293,38 @@ python -m pytest tests/ -q                                                      
 **结构性阻碍（与候选无关，扩容的既有代价）**：①冻结注入评测 `data/eval_injection.jsonl` 的 oos01-04 把 **天津/重庆/苏州/宁波钉死为"库外城市→诚实拒答"**（expect_refusal=True）——这四个高频候选城一旦扩入语料，冻结项预期即被事实推翻（拒答→可答），而冻结评测集零字节红线禁止回改，故四城直接排除；②其余候选城（南京/武汉/西安/郑州/长沙/青岛等）均在 `OOS_MAJOR_CITIES` 哨兵表内，扩容需同步改 `settings.cities`+哨兵表（app/config.py+app/agent/router.py，涉及 oos 判定与路由验证面）并重测注入/拒答链路；③租金额度对比类评测金标依赖 `tools.py` 限额表，新城市若进 compare 题还需工具表面核对。
 
 **决定**：本轮**不做扩容**。宁缺毋滥纪律优先于"丰富"：三城候选分别卡在"无现行文号可锚"（天津）、"现行文件即将更替且新版不可逐字核验"（武汉）、"无权威源且数字自相矛盾"（西安）——任何一条都构成本仓入库纪律（每文件 source_url+抓取时间+双源交叉核对+现行有效可验证）下的杜撰/失实风险。已核实的武汉武公中规〔2023〕2号数字（18000/36000 元/年）作为尝试轨迹留档于本节（不进入语料）。**重开条件**：武汉新版（2026-11-20 施行）官网正文/附件可逐字抓取并双源核实后，按既有真实化流程（PC-2 同款）单独立项扩容；届时同步评估 oos01-04 与哨兵表的连带面。
+
+### 1B5（2026-11-19，[1B5-PC] 车道批）时效性引擎收官 + #138 抽取脆性修复：新冻结口径落档
+
+基线 HEAD=67cc972（79 绿），主会话统一分组提交，全程 `POLICY_COMPASS_FORCE_MOCK=1` 零现金、未 push、冻结评测集旧文件零字节改动（v1/v2/注入/四回归子集/timeliness 均只读未碰金标）。
+
+- **任务一 时效性引擎收官（半成品→成品）**：①`app/retrieval/hybrid.py` 检索新增 `status_filter`/`as_of_date` 过滤参数（融合入口 `_rrf_fuse` 裁剪候选，默认 None=零变化）；`date_rank()` **死代码终结**——首个正式消费者=同分数并列时同政策系列（同 doc_id/同非空 doc_no/同标题）内新版本稳定靠前（`_newer_version_first_on_ties`），作用域收窄保证零漂移（语料 23 份 doc_no/标题全唯一→冻结运行不可能触发重排，有专测钉住）；②对比问答：`app/agent/router.py` 新增 `VERSION_COMPARE_KEYWORDS` 确定性检测（词面只收时间对比语义、不收"区别/对比/之前"等易误报词，同 oos_place 口径无关叠加模式）→ `retrieve_node` 对比命中时现行+已废止双路检索（`_merge_version_results`：现行 3 席+旧版 2 席+回填，旧路空=原对象返回）→ 生成 prompt 追加【新旧版本对比作答口径】段（仅命中时追加，未命中 system 提示词零字节变化）；引用卡 `Source.is_valid/effective_date` 已有字段直接透传（routes.py 零改动核查确认）；③**新评测集 `data/eval_set_timeliness.jsonl` 13 条**（id 201–213，字段逐字段对齐 v2，202/212 标 holdout；逐条出处表含语料文件+逐字原句见 `data/eval_set_timeliness_provenance.md`）。**如实缩减 18→13**：语料盘点 0 份已废止文件（已废止检索题无可支撑金标，不造演示语料凑题——扩语料会扰动 BM25 df/idf 漂移冻结口径）、新旧对仅 1 对（杭州租房提取 2023 版 2000 元/月 vs 2025 版按实际房租支出上浮 50%）、生效日期覆盖 22/23（成都件无日期，as_of 过滤下被排除——补权威日期头属语料车道留档）。**首跑 13/13=100%**（recall@5=1.0、MRR 0.923、废止/过滤泄漏=0，`evidence/eval_timeliness_mock_1b5.md`）。tests/test_timeliness.py 16 项（过滤边界/date_rank 消费者/对比路由/双版本检索/引用卡双版本/零变化守门/评测集元守门）。
+- **任务二 #138 mock 抽取脆性修复（评测驱动，1B4 归因遗留当日清）**：**根因=mock 生成侧抽取窗截断**——`MockLLMClient._generate` 只消化前 3 个资料块，1B4 quirk 修复后标题信号入向量使广州块从窗口内重排到第 5 位整块被静默丢弃（检索 recall=1.0 正确、路由正确、判分正确、块内选句逻辑正确——排他证据链完整）；修法=全量块读取（生成上下文已经过 grade≥0.4 相关性闸，与真实模型"读完参考资料再选关键句"职责对齐）。**纯增量证明（非放水）**：块内选句评分函数逐字节不变、前 3 块 digest 逐字节不变、新块只追加——90/90 新答案 payload 均以旧 payload 为前缀、73 条变长零删减，数学上不可能 pass→fail 翻转；判分逻辑/金标/检索/语料零改动。**#131（深圳上海对比题）同根因连带救回**——1B4 冻结失败集 7 条中 2 条同脆性一并清零。tests/test_mock_extract.py 9 项（#138 场景最小复现/双城 compare 零回归/单城抽取零变化/死代码静态钉 `test_generate_no_dead_code`——AST 断言函数体以 Return 收尾防再积累）；遗留观察项 mock.py `_generate` return 后死代码（:361-365）已删除、`national_break_impact.md` 城市误抽"北京"未动留档（动抽取兜底牵连库重建与冻结口径，超车道范围）。
+- **新冻结口径对照表（主会话全量实跑，`POLICY_COMPASS_FORCE_MOCK=1`）**：
+
+| 指标 | 1B4 冻结（postquirk） | **1B5 新冻结** | Δ 与归因 |
+|---|---|---|---|
+| v1 mock e2e（33 题） | 87.9%（29/33，失败 #1/6/27/28） | **87.9%**（29/33，失败 #1/6/27/28） | **零变化**（mock.py 改动对 v1 判分无影响——失败 4 条均为检索/评分层归因） |
+| v2 mock e2e（90 题） | 92.2%（83/90，失败 #105/129/131/138/167/177/179） | **94.4%**（85/90，失败 #105/129/167/177/179） | **+2.2pp**；#131/#138 同根因（抽取窗截断）救回，其余 5 条逐条原状 |
+| v1 B 口径 recall@5 / MRR | 90.8% / 0.777 | **90.8% / 0.777** | 零变化（检索层未动的不变量） |
+| v2 B 口径 recall@5 / MRR | 94.4% / 0.893 | **94.4% / 0.893** | 零变化（同上；与 e2e 94.4% 为独立口径同值巧合） |
+| BM25 消融两行（v1 纯净/加权；v2 纯净/加权） | 98.3/96.5；97.9/97.2 | **98.3/96.5；97.9/97.2** | 零变化（chunk 正文不变量再实证） |
+| usage 签名 | refusals 4/11、tool_calls 6/19 | refusals 4/11、tool_calls 6/19 | 零变化（completion_tokens 上涨=73 条答案追加块 digest 段） |
+| 注入对抗评测 | 18/18 | **18/18** | 零变化（`evidence/injection_1b5.md` 留档，历史报告还原） |
+| faithfulness | v1 277/277、v2 606/606 双 100% | v1 **362/362**、v2 **929/929** 双 100% | 原子数 v1 +85/v2 +323（73 条答案变长追加分块 digest 段，1B4 同类先例 599→606）、**未支持仍 0**（追加句均为原文摘句，`evidence/faithfulness_1b5.md` 留档） |
+| 回归子集 | loan_v1 8/8、loan_v2 10/10、corpus 4/4、loan_v2b 1/2 | **逐条一致** | 零变化（#129 属旧冻结失败集非新回归） |
+| timeliness 新集 | —（本批新建） | **13/13=100%** | 首跑（recall@5=1.0、MRR 0.923） |
+| pytest | 79 全绿 | **104 全绿** | +25（timeliness 16+mock_extract 9） |
+
+**新冻结口径复现命令**：
+
+```bash
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --eval-set data/eval_set_v2.jsonl --out evidence/eval_v2_mock_1b5.md   # 94.4%（85/90）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --out evidence/eval_v1_mock_1b5.md                                    # 87.9%（29/33）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval.py --eval-set data/eval_set_timeliness.jsonl --out evidence/eval_timeliness_mock_1b5.md  # 100%（13/13）
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_injection.py      # 18/18
+POLICY_COMPASS_FORCE_MOCK=1 python scripts/eval_faithfulness.py   # v1 362/362、v2 929/929
+python -m pytest tests/ -q                                        # 104 passed
+```
+
+**诚实边界**：①真模型现金窗口未批仍留档（1B4 遗留②不动）；②agenteval 30 条 policy smoke 门禁基线漂移较 1B4 记录进一步扩大（92.2→94.4），基线重建仍为待批遗留项（重建≠放水）；③对比意图词表在 real 口径下会命中 v2 #108/#172（"原来/修订"）携带对比指令重答——mock 已证零漂移、real 影响待复验窗口关注；④语料无已废止文件，双版本检索的"已废止路"生产语料上恒空（合成件单测+端到端覆盖，真正生效需未来收录废止文件——与 v1 冻结题 #1 的 2023 版"现行有效"标注互斥，需主会话决策）；⑤mock.py 死代码已删（静态钉防再积累），`national_break_impact.md` 城市误抽"北京"留档不修。

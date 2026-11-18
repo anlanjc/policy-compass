@@ -4,7 +4,7 @@
 >
 > 站在 [Datawhale《All in RAG》](https://github.com/datawhalechina/all-in-rag) 教程"四步构建 RAG"之上的业务化演进：教程教 RAG 基础，本项目补上教程尚未覆盖的 **Agentic RAG** 专题，并以政策问答这一强约束场景做深。
 
-[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-79%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量腿已真模型复验-生产维持BM25·结论留档-blue)]()
+[![CI](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml/badge.svg)](https://github.com/anlanjc/policy-compass/actions/workflows/ci.yml) [![pytest](https://img.shields.io/badge/pytest-104%20项-brightgreen)]() [![eval_v1_real](https://img.shields.io/badge/v1_real-100%25%20(33%2F33)-brightgreen)]() [![eval_v2_real](https://img.shields.io/badge/v2_real-93.3%25-brightgreen)]() [![recall@5](https://img.shields.io/badge/recall@5-97.9%2F97.2-blue)]() [![消融](https://img.shields.io/badge/向量腿已真模型复验-生产维持BM25·结论留档-blue)]()
 
 ## 架构总览
 
@@ -140,7 +140,7 @@ python -m pytest tests/ -q        # 79 项测试（mock 模式，零 API key 可
 |---|---|---|---|
 | v1 smoke | 33 | **100.0%** | 33/33 全过（PC-3 2026-11-02 复测：检索扩展机制修复后，历史 2 例评分抖动误拒消解；冻结口径 93.9% 见 EVIDENCE §4） |
 | v2 full | 90 | **93.3%** | calc 14/15 · refuse 12/12 零编造；PC-3 复测与冻结口径持平（84/90，失败集更新见 EVIDENCE） |
-| v2 full（mock） | 90 | **92.2%** | mock 链路验证口径（1B4 embed 输入 quirk 修复+全量重摄取后：91.1%→92.2%，#183/#189 救回、#138 新暴露为 mock 抽取脆性——检索召回均正确；历史口径 91.1% 见 EVIDENCE PC-3/PC-CROWD 节与历史注记） |
+| v2 full（mock） | 90 | **94.4%** | mock 链路验证口径（[1B5] 评测驱动修复：92.2%→94.4%，#131/#138 同根因救回=mock 生成侧抽取窗截断——只读前 3 块丢第 4/5 位块，修为全量块读取、纯增量零翻转；1B4 口径 92.2%、PC-3 口径 91.1% 见 EVIDENCE 历史注记；本行 94.4% 与 recall@5 94.4% 为独立口径同值巧合） |
 
 > real 两行为 PC-3（2026-11-01/02）检索机制修复后全量重跑口径：黑话扩展 token 化（修复前扩展词 df 命中率≈0，feature 近乎空转）+ 多城问法城市加权——v1 100%（历史 2 例评分抖动误拒消解）、v2 93.3% 与冻结口径持平，检索消融 recall@5 95.9/95.3 → 97.9/97.2。冻结历史口径与逐轮明细见 [EVIDENCE.md §4](EVIDENCE.md)。完整失败归因（0 条编造）见 [evidence/fail_analysis.md](evidence/fail_analysis.md)。完整证据链（消融/故障注入 61 次编造=0/压测/复现命令）见 [EVIDENCE.md](EVIDENCE.md)。
 
