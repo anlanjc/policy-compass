@@ -69,6 +69,30 @@ def unsupported_place(question: str) -> bool:
     return any(name in question for name in OOS_MAJOR_CITIES)
 
 
+# 新旧版本对比意图词表（1B5 政策时效性引擎）。与 DOMAIN_KEYWORDS/CALC_PAT 同款
+# 确定性词面匹配（in 判定），不走 LLM——意图检测必须在 LLM/规则/mock 三种路由
+# 口径下统一成立（同 unsupported_place 的叠加模式）。词面只取时间对比语义：
+# 不收「区别/对比/哪个」（v2 compare 题型的城 vs 城语义，混入会让全部跨城题
+# 触发双版本检索）；不收「之前/过去」等易误报泛词（"租房之前要备案"）。
+# PC-3 教训在案：扩展词必须进入匹配空间才生效——此处直接对问题原文做子串
+# 判定（与城市/领域检测同一匹配层，不存在 token 化失配问题）。
+VERSION_COMPARE_KEYWORDS = (
+    "以前", "原来", "变了", "新旧", "修订", "调整前", "老政策", "旧政策",
+    "旧版", "老版", "历史版本", "废止", "变化前",
+)
+
+
+def wants_version_compare(question: str) -> bool:
+    """新旧政策对比意图检测（确定性，1B5）。
+
+    命中 → route_node 在 route dict 标记 version_compare，retrieve_node 走
+    现行+已废止双路检索（status_filter 参数），生成 prompt 追加双版本作答
+    口径。失败模式=漏检（退化为普通单路检索，与旧行为一致，不会误触发改答）；
+    误检成本=一次空结果检索 + prompt 追加段，语料无已废止文件时答案路径零漂移。
+    """
+    return any(k in question for k in VERSION_COMPARE_KEYWORDS)
+
+
 def rule_based_route(question: str) -> RouteResult:
     """确定性规则路由：LLM 不可用时的兜底，也是路由正确性的对照组。"""
     hits = [name for name in settings.cities if name != "全国" and name in question]

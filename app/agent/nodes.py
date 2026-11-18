@@ -30,6 +30,41 @@ def _ev(name: str, **kw: Any) -> dict[str, Any]:
     return {"event": name, "ts": round(time.time(), 3), **kw}
 
 
+def _merge_version_results(r_cur, r_old):
+    """合并现行/已废止双路检索结果（1B5 政策时效性引擎）。
+
+    席位规则：现行口径优先占 top_k_final-2 席，旧版占 2 席——与生成上下文
+    的 top_k_final 截断配合，保证新旧两版同时进入参考资料（对比作答的前提）；
+    任一路不足时由另一路剩余块回填。旧路为空（语料无已废止文件的常态）→
+    原样返回现行路对象，与单路检索逐字节同效。
+    """
+    if not r_old.chunks:
+        return r_cur
+    from ..retrieval.hybrid import RetrieveResult  # 局部导入避免环依赖
+
+    k = settings.top_k_final
+    cur_keep = max(k - 2, 1)
+    seen: set[str] = set()
+    merged = []
+    for sc in list(r_cur.chunks[:cur_keep]) + list(r_old.chunks[:2]):
+        if sc.chunk.chunk_id not in seen:
+            seen.add(sc.chunk.chunk_id)
+            merged.append(sc)
+    for sc in list(r_cur.chunks[cur_keep:]) + list(r_old.chunks[2:]):
+        if len(merged) >= k:
+            break
+        if sc.chunk.chunk_id not in seen:
+            seen.add(sc.chunk.chunk_id)
+            merged.append(sc)
+    return RetrieveResult(
+        query=r_cur.query,
+        chunks=merged,
+        expanded_terms=r_cur.expanded_terms or r_old.expanded_terms,
+        rerank_used=r_cur.rerank_used or r_old.rerank_used,
+        latency_ms=round(r_cur.latency_ms + r_old.latency_ms, 1),
+    )
+
+
 # ---------- 评分与校验的输出 schema ----------
 
 class GradeResult(BaseModel):
@@ -52,7 +87,7 @@ class VerifyResult(BaseModel):
 
 def make_nodes(retriever, llm):
     async def route_node(state: AgentState) -> dict:
-        from .router import route_query, unsupported_place
+        from .router import route_query, unsupported_place, wants_version_compare
 
         t0 = time.perf_counter()
         route = await route_query(llm, state["question"], state.get("messages", [])[:-1])
@@ -61,6 +96,10 @@ def make_nodes(retriever, llm):
         # 统一叠加——覆盖外主要城市问题不得由他城/全国文件顶答（graph._after_grade
         # 门禁直落诚实拒答）。trace 事件照常携带路由字段，哨兵结果入 route dict。
         rd["oos_place"] = unsupported_place(state["question"])
+        # 新旧版本对比意图（1B5 时效性引擎）：确定性词面检测，同 oos_place 的
+        # 口径无关叠加模式——retrieve_node 据此走现行+已废止双路检索，
+        # build_generation_messages 据此追加双版本作答口径。
+        rd["version_compare"] = wants_version_compare(state["question"])
         return {
             "route": rd,
             "query": state["question"],
@@ -79,12 +118,30 @@ def make_nodes(retriever, llm):
     async def retrieve_node(state: AgentState) -> dict:
         t0 = time.perf_counter()
         route = state["route"]
-        r = await retriever.search(
-            state["query"],
-            city=route.get("city"),
-            domain=route.get("domain"),
-            use_rerank=True,
-        )
+        # 新旧版本对比（1B5 时效性引擎）：现行 + 已废止同主题各检一次
+        # （status_filter 参数）。已废止路为空（当前正式语料 23 份全部现行有效
+        # 的常态）→ 合并即现行路原对象，与单路检索逐字节同效。
+        old_hits: int | None = None
+        if route.get("version_compare"):
+            r_cur, r_old = await asyncio.gather(
+                retriever.search(
+                    state["query"], city=route.get("city"), domain=route.get("domain"),
+                    use_rerank=True, status_filter="现行有效",
+                ),
+                retriever.search(
+                    state["query"], city=route.get("city"), domain=route.get("domain"),
+                    use_rerank=True, status_filter="已废止",
+                ),
+            )
+            r = _merge_version_results(r_cur, r_old)
+            old_hits = len(r_old.chunks)
+        else:
+            r = await retriever.search(
+                state["query"],
+                city=route.get("city"),
+                domain=route.get("domain"),
+                use_rerank=True,
+            )
         documents = []
         quarantined_lines = 0
         flagged_docs = 0
@@ -135,6 +192,8 @@ def make_nodes(retriever, llm):
                     latency_ms=r.latency_ms,
                     total_ms=round((time.perf_counter() - t0) * 1000, 1),
                     injection_quarantined=quarantined_lines,
+                    # 仅对比意图命中时携带（1B5）：非对比路径事件与旧版逐字段一致
+                    **({"old_version_hits": old_hits} if old_hits is not None else {}),
                 )
             ],
         }
@@ -308,6 +367,20 @@ def make_nodes(retriever, llm):
             "5. 资料不足以回答时明确说明知识库未收录，建议咨询 12329（公积金）/12333（人社）热线；\n"
             "6. 回答简洁分条，先给结论再给依据。"
         )
+        # 新旧版本对比口径（1B5 时效性引擎）：仅在对比意图命中时追加——未命中时
+        # system 提示词与旧版逐字节一致（冻结口径零漂移）。新旧两版文件已由
+        # retrieve_node 双路检索带入参考资料（每份资料自带生效日期/文号/状态
+        # 元数据行），本段只负责作答规则：现行口径优先 + 旧版差异 + 标注时点。
+        if (state.get("route") or {}).get("version_compare"):
+            system += (
+                "\n【新旧版本对比作答口径】\n"
+                "1. 以现行有效文件为作答口径优先；\n"
+                "2. 参考资料中同一事项存在多份文件（生效日期不同或含已废止文件）时，"
+                "以生效日期较新者为现行口径，明确指出旧版规定与现行的关键差异，"
+                "并分别标注各自的生效日期与发文字号；\n"
+                "3. 参考资料中未包含旧版规定时，如实说明知识库未收录旧版原文，"
+                "不得凭记忆对比编造差异。"
+            )
         user = (
             f"【参考资料】\n{chr(10).join(ctx_lines) or '（无）'}{tool_part}{hist_part}"
             f"\n\n【用户问题】{state['question']}"

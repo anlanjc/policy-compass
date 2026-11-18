@@ -121,9 +121,27 @@ def extract_metadata(file_name: str, content: str) -> PolicyMeta:
     return meta
 
 
-def date_rank(d: str) -> float:
-    """生效日期转可比数值（用于新旧政策排序），非法日期返回 0。"""
+def parse_effective_date(d: str | None) -> date | None:
+    """生效日期字符串转 date；空值/非法格式返回 None。
+
+    1B5 时效性引擎的判定基础：检索期 as_of 过滤用它把 effective_date 与
+    as_of 时点比较（无日期/日期非法 → None，调用方按"无法证明已生效"处理）。
+    异常面与原 date_rank 完全一致（ValueError/TypeError → 失败），行为等价。
+    """
+    if not d:
+        return None
     try:
-        return date.fromisoformat(d).toordinal() * 1.0
+        return date.fromisoformat(d)
     except (ValueError, TypeError):
-        return 0.0
+        return None
+
+
+def date_rank(d: str) -> float:
+    """生效日期转可比数值（用于新旧政策排序），非法日期返回 0。
+
+    消费者（1B5 起生效，终结本函数自上线以来零消费者的死代码状态）：
+    app/retrieval/hybrid.py._newer_version_first_on_ties —— 同 doc_no/同标题
+    的新旧版本融合分并列时按本值降序，使新版本稳定排在旧版本之前。
+    """
+    parsed = parse_effective_date(d)
+    return parsed.toordinal() * 1.0 if parsed else 0.0

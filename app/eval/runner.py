@@ -67,6 +67,10 @@ async def eval_retrieval(retriever, cases: list[dict], variant: str = "full") ->
         r = await retriever.search(
             c["question"], city=route.city, domain=route.domain,
             top_k=5, use_rerank=False,
+            # 1B5 时效集可选字段（data/eval_set_timeliness.jsonl 的 as_of_date /
+            # status_filter）：冻结集无此字段 → None → 检索路径与旧版零变化
+            status_filter=c.get("status_filter"),
+            as_of_date=c.get("as_of_date"),
         )
         hit_docs = [sc.chunk.doc_id for sc in r.chunks]
         rec = recall_at_k(hit_docs, c["expect_docs"], 5)
